@@ -1,41 +1,27 @@
-# cpe-sms — 华为 5G CPE Ultra 6 (H168-383) 短信网关 & Telegram 机器人
+# cpe-sms — 华为 5G CPE Ultra 6 (H168-383) 短信网关 · Telegram 机器人 · daisyUI 实时网页中心
 
-专为 **华为 5G CPE Ultra 6 (`H168-383`)** 打造的轻量级短信收发网关。支持自动完成 CPE 管理后台鉴权与报文加解密，通过 **Telegram Bot** 实时接收短信推送（自动提取验证码一键复制）、**直接回复消息发短信**，同时内置 **CLI 命令行**、**HTTP REST API** 与 **Webhook**，非常适合部署在局域网 NAS（如 `192.168.8.108`）或任意接入 **Tailscale** 子网路由的节点上 7×24 小时稳定运行。
+专为 **华为 5G CPE Ultra 6 (`H168-383`)** 打造的全功能短信收发与归档系统。支持自动完成 CPE 管理后台鉴权与报文加解密，提供 **Telegram 双向机器人（含引导式发短信向导）**、基于 **`daisyui` 包构建的高位端口实时网页中心（默认 `:18383`，可选开关）**、**全量历史短信本地归档**、**54 国国际区号识别** 以及 **iPhone `.vcf` 通讯录本地导入**，非常适合部署在局域网 NAS（如 `192.168.8.108`）并结合 **Tailscale** 随时随地访问。
 
 ---
 
 ## 核心特性
 
-- **原生完整协议通信支持（零第三方 npm 依赖）**
-  - 完整实现 H168-383 固件的**华为非标 SCRAM-SHA256** 登录挑战握手、`_ResponseSource: Broswer` 头与单次滚动 CSRF Token 队列。
-  - 原生实现 `SoftwareCapability[208] = 1` 要求的 **Curve25519 ECDH（大端无钳位 Montgomery Ladder）+ AES-256-GCM (`enc-type=1|2|3`)** 请求/响应加解密与服务端公钥签名防篡改校验。
-- **浏览器零冲突共存（免登录轮询 + 瞬时会话）**
-  - H168-383 同一时刻仅允许 1 个管理员会话在线（传统常驻脚本会导致浏览器打开 `http://192.168.8.1/#/sms` 报 `108003` 重复登录错误）。
-  - 本程序平时每 5 秒调用**免登录**接口 `/api/monitoring/check-notifications` 监控未读数，仅在检测到新短信或执行指令时发起一次约 `200ms` 的 `登录 -> 加解密读写 -> 立即登出` 原子操作，并在后台检测到你正用浏览器登录时自动避让周期同步。
-- **防锁定保护**
-  - 若密码配置错误（返回 `108006`），立即熔断报错**绝不自动重试**，防止触发 CPE 管理账户锁定（`108007`）。
-- **丝滑的 Telegram 双向交互体验**
-  - **免查 Chat ID 一键配对**：首次对机器人发送 `/auth <CPE密码>` 即可完成绑定并**自动撤回含密码的消息**，授权记录持久化保存在本地 `data/state.json`。
-  - **验证码高亮复制**：自动识别中英文验证码/OTP，在通知卡片中以 `<code>123456</code>` 单击复制格式展示。
-  - **原生「回复」即发短信**：在 Telegram 中直接长按/右键「回复 (Reply)」任意一条短信通知或对话卡片，输入文字即可直接通过 CPE 发送短信给对方号码，并自动轮询运营商回执状态（`send-status`）。
-  - **首启防刷屏**：首次启动自动建立现有历史短信游标快照，不会把收件箱里的上百条存量旧短信一股脑刷屏推送。
-- **NAS & Tailscale 友好**
-  - 基于纯 Node.js 标准库（`node:crypto`、`fetch`、`node:http`），`node:22-alpine` 镜像体积小、内存占用仅 ~35MB，支持 x86_64 / ARM64 NAS 一键 `docker compose up -d`。
-  - 可选开启 Bearer Token 保护的 **HTTP REST API** 与 **Webhook**，只要连入 Tailscale 网络，随时可通过手机「快捷指令」、`curl` 或其他服务收发短信。
-
----
-
-## 为什么不直接用 GitHub 现有开源项目？
-
-针对常见的华为 HiLink 开源库与工具，结合对 `H168-383` 固件前端与真机的实测对比如下：
-
-| 项目 / 方案 | 对 H168-383 的兼容性与局限 |
-| :--- | :--- |
-| **`Salamek/huawei-lte-api`** (Python)<br>**`lvcdy/huawei-lte-api-go`** (Go) | 支持基础 SCRAM 登录，但**完全未实现 `SoftwareCapability[208]` 的 Curve25519 ECDH + AES-256-GCM 接口加密**。在 H168-383（`encrypt_enabled=1`）上，WebUI 的会话联系人列表（`sms-list-contact`）、单号码对话（`sms-list-phone`）、发送短信（`send-sms` `enc-type=2`）与发送状态轮询（`send-status` `enc-type=1`）均走加密通道。 |
-| **`PlayFaster/ha-huawei-router-5g-monitor`** | 重度绑定 Home Assistant，底层直接依赖 `huawei-lte-api`，不含 ECC/AES-GCM 报文加密实现，且无法独立作为轻量 Telegram 双向网关运行。 |
-| **`yoratoni/huawei-router-sms-forwarding`** | 通过运营商短信将收到的短信“再发一条手机短信”到另一张卡（消耗短信资费），不支持 Telegram 实时推送与交互式回复。 |
-| **`chenwei791129/...SMS-to-E-mail-Sender`** | 仅支持老款路由登录与单向 SMTP 邮件转发，不支持 SCRAM/ECC 加密与双向发信。 |
-| **原生 `curl` 直接 POST XML** | 无法直接工作：每次请求前必须维护 `SessionID`、提取 64 位 Token 后 32 位并追踪响应头 `__RequestVerificationTokenone/two` 滚动更新，完成非标 SCRAM 握手后还需进行 Curve25519 密钥协商与 AES-256-GCM 封装。 |
+- **🌼 可选开启的 daisyUI 实时短信网页中心（高位端口 `:18383`）**
+  - 基于官方 **`daisyui` (v5) + Tailwind CSS v4** npm 包编译打包（零外部 CDN 依赖，内网离线秒开，内置 `Light` / `Dark` / `Nord` / `Emerald` / `Dim` / `Cupcake` 6 款主题切换）。
+  - **全量历史短信归档**：自动分页拉取 CPE 内**全部历史收件箱与发件箱短信**持久化至本地 `data/sms-archive.json`（实测 185 条历史短信全量加密拉取仅需 ~400ms），即便日后清理了 CPE 500 条上限的存储，历史记录依然完整保留。
+  - **SSE 毫秒级实时推送**：基于 `/api/events` (Server-Sent Events)，收到新短信、验证码或发出短信时网页对话流实时自动刷新并弹出通知，无需手动刷新。
+  - **灵活可选开关**：可通过 `.env` 的 `WEB_ENABLED=true|false` 一键开关，也支持通过 `docker compose --profile web up -d` 独立拉起或关停网页容器。
+- **✍️ Telegram 引导式发短信向导 & 原生回复发信**
+  - **分步引导式发信（`/new` 或点击 `✍️ 引导式发送短信` 按钮）**：
+    1. **选择/输入接收方**：默认采用 **🇮🇪 爱尔兰区号 (`+353`)**，输入本地号码（如 `083 123 4567`）自动剥离前导 `0` 规范化为 `+353831234567`；同时提供 **🇨🇳 中国 `+86` / 🇬🇧 英国 `+44` / 🇺🇸 美加 `+1` / 🇭🇰 香港 `+852`** 一键切换按钮，或直接输入任意带 `+` / `00` 的国际号码，或直接输入**联系人姓名**搜索。
+    2. **输入正文与发送前预览**：自动计算 `GSM 7-bit` / `UCS-2` 编码与短信分段条数，展示收件人归属地预览卡片，点击「🚀 确认立即发送」后执行发送并轮询运营商回执。
+  - **直接「回复」通知即发短信**：长按/右键「回复 (Reply)」任意一条短信通知卡片即可直接回信。
+- **🌍 发件人身份、国家区号识别与 iPhone 通讯录导入**
+  - **自动国家/来源识别**：内置 54 个常见国家/地区区号库与国旗标识（如 `🇮🇪 爱尔兰 +353`、`🇨🇳 中国大陆 +86`、`🇬🇧 英国 +44`），自动区分字母品牌服务号（如 `🏢 Three`、`Apple`、`Revolut`）、运营商短号（`📟 50272`）、中国 `106` 通道号，并自动提取正文中的 `【品牌签名】`。
+  - **零云端隐私泄露的 iPhone 通讯录支持（可选）**：支持将 iPhone 导出的 `.vcf` (vCard) 文件**直接发送给 Telegram 机器人**或在 **Web 网页端上传**，自动解析 Apple `item1.TEL` 与 UTF-8 Quoted-Printable 中文姓名，保存在本地 `data/contacts.json`，自动跨格式匹配 `083xxxxxxx` 与 `+35383xxxxxxx`。
+- **🔐 原生完整协议通信 & 浏览器零冲突共存**
+  - 完整实现 H168-383 固件的**华为非标 SCRAM-SHA256** 握手与 **Curve25519 ECDH（大端无钳位）+ AES-256-GCM (`enc-type=1|2|3`)** 接口加解密。
+  - 平时每 5 秒调用**免登录**接口 `/api/monitoring/check-notifications`，仅在有新短信或收发操作时建立 ~200ms 瞬时会话并立即登出，绝不抢占浏览器访问 `http://192.168.8.1/#/sms`，遇到密码错误 (`108006`) 立即熔断防锁定。
 
 ---
 
@@ -45,16 +31,18 @@
 flowchart LR
     subgraph LAN["家庭局域网 / Tailscale 内网"]
         CPE["华为 H168-383<br/>192.168.8.1"]
-        NAS["NAS / 宿主机 (192.168.8.108)<br/>cpe-sms 守护进程"]
+        NAS["NAS (192.168.8.108)<br/>cpe-sms 服务 + 本地历史归档库"]
     end
 
-    TG["Telegram 客户端<br/>收发短信 / 验证码复制"]
-    API["手机快捷指令 / 脚本<br/>(通过 Tailscale 访问 REST API)"]
+    WEB["浏览器实时短信台 (daisyUI)<br/>http://192.168.8.108:18383"]
+    TG["Telegram 机器人<br/>实时通知 / 引导式发短信 / .vcf 导入"]
+    API["快捷指令 / 外部脚本<br/>REST API (:8080)"]
 
-    NAS -- "1. 免登录轮询 (5s)<br/>GET /api/monitoring/check-notifications" --> CPE
-    NAS -- "2. 按需瞬时会话 (~200ms)<br/>SCRAM + Curve25519 + AES-256-GCM + Logout" --> CPE
-    NAS <-- "Telegram Bot API<br/>实时推送 & 直接回复发信" --> TG
-    API -- "Bearer Token<br/>POST /api/send" --> NAS
+    NAS -- "1. 免登录轮询 (5s)<br/>check-notifications" --> CPE
+    NAS -- "2. 瞬时加密会话 (~200ms)<br/>SCRAM + Curve25519 + AES-GCM + Logout" --> CPE
+    NAS <-- "SSE 实时流 (/api/events)<br/>全量历史会话 & 在线收发" --> WEB
+    NAS <-- "Telegram Bot API" --> TG
+    API -- "Bearer Token" --> NAS
 ```
 
 ---
@@ -63,143 +51,117 @@ flowchart LR
 
 ### 1. 配置文件（`.env`）
 
-复制模板或确认项目根目录下的 `.env` 文件：
-
 ```bash
 cp .env.example .env
 ```
 
-最小必填配置只需两项（其余均有合理默认值）：
+核心配置示例（完整说明见 [`.env.example`](.env.example)）：
 
 ```dotenv
 CPE_URL=http://192.168.8.1
 CPE_PASSWORD=你的CPE管理界面密码
 TELEGRAM_API=你的Telegram机器人Token
-```
 
-> **提示**：你无需手动查找并填写 `TELEGRAM_CHAT_IDS`。程序启动后，在 Telegram 中打开你的机器人，发送 `/auth 你的CPE管理界面密码`，机器人验证通过后会自动撤回该条密码消息，并将你的 Chat ID 安全持久化写入 `./data/state.json`。
+# 默认电话国家区号（默认爱尔兰 +353）
+DEFAULT_COUNTRY_CODE=+353
+
+# 🌼 实时网页开关与高位端口（可选开启或关闭）
+WEB_ENABLED=true
+WEB_PORT=18383
+```
 
 ---
 
-### 2. 部署方式一：NAS (`192.168.8.108`) Docker Compose 部署（推荐）
+### 2. NAS (`192.168.8.108`) Docker Compose 部署（两种可选网页模式）
 
-将仓库上传或克隆到 NAS（例如 `/volume1/docker/cpe-sms`），确保同目录下有配置好的 `.env` 文件，执行：
+#### 方式 A：单容器一体化运行（默认推荐）
+当 `.env` 中 `WEB_ENABLED=true`（默认）时，一条命令同时拉起短信监听、Telegram Bot 与 `:18383` 实时网页（若不想开启网页，只需改 `WEB_ENABLED=false`）：
 
 ```bash
 docker compose up -d --build
-docker compose logs -f
 ```
+- 实时网页地址：`http://192.168.8.108:18383`（连上 Tailscale 在外网同样直接访问，登录密码即 `CPE_PASSWORD`）。
+- 首次启动会自动从 H168-383 拉取全部历史收发件箱短信存入 `./data/sms-archive.json`。
 
-- 容器会自动将状态游标与授权记录保存在 `./data/state.json`。
-- 如果 NAS 安装了 Tailscale 并暴露了 `192.168.8.0/24` 子网路由（或容器运行在任意已连入该 Tailscale 网络的机器上），`CPE_URL=http://192.168.8.1` 均可直接连通。
-- 默认同时在 `8080` 端口提供受密码/Token 保护的 HTTP API（如不需要可在 `.env` 中设 `HTTP_PORT=0`）。
+#### 方式 B：主服务与网页容器按需解耦拉起（Compose Profile 模式）
+如果你希望主后台服务完全不暴露网页（`.env` 设置 `WEB_ENABLED=false`），仅在需要看网页时单独拉起前端容器：
+
+```bash
+# 仅启动后台短信监听 + Telegram 机器人
+WEB_ENABLED=false docker compose up -d
+
+# 需要网页时，随时一行命令连同网页容器一起拉起（默认映射 18384，或设 WEB_STANDALONE_PORT=18383）
+docker compose --profile web up -d
+
+# 用完随时单独关停网页容器，不影响后台机器人
+docker compose --profile web stop cpe-sms-web
+```
 
 ---
 
-### 3. 部署方式二：本地 / 裸机直接运行（Node.js >= 20）
+### 3. 本地 / 命令行运行（Node.js >= 20）
 
-无需 `npm install`（零外部依赖），直接运行即可：
+运行时**零生产环境外部依赖**（预编译好的 daisyUI 样式已内置于 `src/web/public/app.css`）：
 
 ```bash
-# 查看 CPE 当前连接、运营商、5G/4G 信号与短信容量
+# 启动完整守护服务（短信轮询 + Telegram Bot + :18383 daisyUI 实时网页 + :8080 REST API）
+npm start
+
+# 手动全量同步 CPE 所有历史短信到本地 data/sms-archive.json
+npm run cpe:sync
+
+# 查看 CPE 5G 信号与短信容量
 npm run cpe:status
 
-# 查看最近短信联系人会话
+# 查看最近会话（带国家国旗、区号与联系人姓名识别）
 npm run cpe:inbox
 
-# 查看未读短信（自动提取验证码）
-node src/cli.js unread
+# 发送短信（默认 +353 爱尔兰本地号自动补全，或传任意 +国际号码）
+npm run cpe:send -- 0831234567 "Hello from H168-383"
+npm run cpe:send -- +8613800138000 "你好！"
 
-# 查看与指定号码/服务号的对话记录
-npm run cpe:thread -- 10086
+# 导入 iPhone / Mac 导出的 .vcf 通讯录文件
+npm run cpe:import-vcf -- ./Contacts.vcf
 
-# 命令行直接发送短信
-npm run cpe:send -- 10086 "CXLL"
-
-# 启动常驻守护进程（监听新短信 + Telegram Bot + HTTP API）
-npm start
+# 若修改了前端 HTML/CSS，重新编译 daisyUI 样式包
+npm install && npm run build:css
 ```
 
 ---
 
 ## Telegram 机器人使用指南
 
-1. 启动服务（`npm start` 或 `docker compose up -d`）。
-2. 在 Telegram 搜索并打开你的机器人，首次发送：
-   ```text
-   /auth 你的CPE登录密码
-   ```
-3. 绑定成功后即可使用以下全部能力：
+首次在 Telegram 打开机器人发送 `/auth 你的CPE登录密码` 即可自动完成绑定（含密码的消息会自动撤回删除）。
 
-| 指令 / 操作 | 功能说明 |
+| 指令 / 交互 | 功能说明 |
 | :--- | :--- |
-| **直接「回复」通知消息** | 对着机器人推送的任意短信通知或 `/chat` 对话卡片点击**回复 (Reply)** 并输入文字，自动作为短信回复给该号码 |
-| `/inbox`（或 `/sms`） | 分页浏览最近短信联系人会话，提供一键进入对话按钮 |
-| `/unread` | 列出最近未读短信及提取出的验证码，支持一键全部标为已读 |
-| `/chat <号码或服务号>` | 解密查看与某号码（如 `10086`、`Three`、`Apple`）的历史往来短信 |
-| `/send <号码> <内容>` | 发送短信（自动识别 GSM 7-bit / UCS-2 中文编码与长短信分段，并轮询运营商发送回执） |
-| `/status` | 查看 H168-383 在线状态、运营商、5G NR / 4G LTE 信号（RSRP/SINR）与收件箱容量（如 `184/500`） |
-| `/read <ID 或 all>` | 将指定短信 ID 或最近未读短信设为已读 |
-| `/delete <ID>` | 删除指定 ID 的短信 |
-| `/sync` | 立即触发一次收件箱同步检测 |
+| **`/new`**（或点击 `✍️ 引导式发送短信`） | **交互式分步发短信**：默认 `🇮🇪 +353` 爱尔兰号码，按钮一键切 `+86` / `+44` / `+1` / `+852` 或搜联系人姓名 -> 输入内容 -> 预览确认发送 |
+| **直接「回复」短信卡片** | 长按/右键回复任意通知或对话消息，输入内容直接回信给对方号码 |
+| **直接发送 `.vcf` 文件** | 把 iPhone 导出的通讯录 `.vcf` 文件直接发给机器人，自动导入本地联系人库 |
+| `/inbox` | 分页查看最近短信联系人会话（显示联系人姓名、国家国旗与区号） |
+| `/unread` | 查看最近未读短信与自动提取的验证码，支持一键标为已读 |
+| `/chat <号码或服务号>` | 查看与某号码（如 `+35383...`、`Three`、`Apple`）的历史对话 |
+| `/send <号码> <内容>` | 一行命令快速发短信（无参数发送 `/send` 也会自动进入引导式向导） |
+| `/contact <号码> <姓名>` | 手动给号码添加或修改姓名备注（如 `/contact 0831234567 房东Sean`） |
+| `/contacts [关键词]` | 查看或搜索本地已保存的通讯录联系人 |
+| `/status` | 查看 H168-383 在线状态、运营商、5G/4G 信号与收件箱及本地归档统计 |
+| `/sync` | 立即全量同步 CPE 历史收发件箱短信到本地归档库 |
 
 ---
 
-## HTTP REST API（适配 Tailscale / 快捷指令 / 自动化）
+## 关于是否需要同步 iPhone 通讯录的建议
 
-当 `HTTP_PORT=8080`（默认）开启时，所有 `/api/*` 接口均需携带请求头 `Authorization: Bearer <API_TOKEN>`（若 `.env` 未单独配置 `API_TOKEN`，默认使用 `CPE_PASSWORD`）：
-
-```bash
-# 1. 健康检查（免鉴权）
-curl http://192.168.8.108:8080/healthz
-
-# 2. 查询 5G 信号与短信统计
-curl -H "Authorization: Bearer $CPE_PASSWORD" \
-  http://192.168.8.108:8080/api/status
-
-# 3. 查询最近短信（?unread=1 仅看未读，或 ?phone=10086 查看单号码对话）
-curl -H "Authorization: Bearer $CPE_PASSWORD" \
-  "http://192.168.8.108:8080/api/messages?unread=1"
-
-# 4. 发送短信
-curl -X POST http://192.168.8.108:8080/api/send \
-  -H "Authorization: Bearer $CPE_PASSWORD" \
-  -H "Content-Type: application/json" \
-  -d '{"phone": "10086", "content": "CXLL"}'
-```
-
-如配置了 `WEBHOOK_URL`，每次收到新短信时还会自动向该地址 `POST` 如下 JSON：
-
-```json
-{
-  "event": "sms.received",
-  "timestamp": "2026-10-27T23:00:00.000Z",
-  "sms": {
-    "index": 40185,
-    "phone": "10086",
-    "content": "【中国移动】您的验证码是 123456",
-    "date": "2026-10-28 07:00:00",
-    "verificationCode": "123456"
-  }
-}
-```
-
----
-
-## H168-383 协议通信要点备忘
-
-在对接 `H168-383` WebUI 前端过程中验证的关键协议细节（实现在 `src/crypto.js` 与 `src/cpe-client.js`）：
-
-1. **请求头与 CSRF Token**：所有请求携带 `_ResponseSource: Broswer`（固件拼写如此）；`GET /api/webserver/token` 返回 64 字符字符串（含 `&#x2F;` 实体转义），反转义后取**后 32 位**作为首个 `__RequestVerificationToken`，每次 `POST` 后从响应头 `__RequestVerificationTokenone` / `two` 更新队列。
-2. **非标 SCRAM-SHA256**：与标准 RFC 5802 相反，固件以 `"Client Key"` / `"Server Key"` / `authMessage` 作为 HMAC 的 **Key**，以派生字节作为 **Message**。
-3. **非 RFC 7748 的 Curve25519 ECDH**：前端使用 `indutny/elliptic` 的 `ec("curve25519")`，采用**大端序 Hex** 且**不做私钥位钳位（unclamped）**；客户端临时公私钥需保证公钥与共享密钥均为完整 64 位 Hex（最高半字节非 0），避免大数序列化丢前导零导致 AES-256 密钥长度不一致。
-4. **AES-256-GCM 载荷格式**：`[8位Hex: UTF-8字节长度 uint32_le] + [24位Hex: 12字节IV] + [32位Hex: 16字节Tag] + [密文Hex]`，附加认证数据固定为 16 个零字节（`AAD = 0x00 * 16`）。
+- **收验证码 / 运营商 / 银行 / 快递平台通知：完全不需要同步通讯录。**
+  - 绝大多数机构短信直接使用**字母品牌发送号**（如 `Three`、`Apple`、`Revolut`、`DHL`）或在正文附带 `【品牌签名】`，本系统已内置自动识别与 54 国国际区号+国旗标注，一眼就能看清来源。
+- **亲友 / 房东 / 同事私人手机号往来，或想按名字发短信：可选按需导入，无需绑定 iCloud。**
+  - 如果只有寥寥几个常用私人号码，直接用 `/contact 083xxxxxxx 房东` 或在网页端点击「✏️ 备注联系人」即可。
+  - 如果私人联系人较多，只需在 iPhone 打开系统「**通讯录 (Contacts)**」App -> 左上角返回「**列表 (Lists)**」-> 长按「**所有联系人**」选择「**导出 (Export)**」-> 直接通过 Telegram 发送给你的机器人（或在 `:18383` 网页端上传）。数据 100% 仅保存在你 NAS 本地的 `data/contacts.json` 中。
 
 ---
 
 ## 测试
 
-运行完整单元测试套件（涵盖 Curve25519、SCRAM、AES-256-GCM 篡改检测、XSS 编解码、长短信编码判定、轮询幂等与 REST API 鉴权）：
+运行完整自动化测试套件（共 16 项测试，涵盖 Curve25519、SCRAM、AES-256-GCM、爱尔兰 `+353` 及多国号码规范化、iPhone `.vcf` Quoted-Printable 解析、daisyUI Web 服务与 SSE 实时流、Telegram 引导式发短信向导）：
 
 ```bash
 npm test

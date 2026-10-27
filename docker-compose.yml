@@ -1,4 +1,5 @@
 services:
+  # 主服务：CPE 短信轮询 + Telegram 机器人 + REST API（当 WEB_ENABLED=true 时默认同时在 18383 提供实时网页）
   cpe-sms:
     build: .
     container_name: cpe-sms
@@ -8,8 +9,30 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - STATE_FILE=/app/data/state.json
+      - ARCHIVE_FILE=/app/data/sms-archive.json
+      - CONTACTS_FILE=/app/data/contacts.json
       - HTTP_PORT=${HTTP_PORT:-8080}
+      - WEB_ENABLED=${WEB_ENABLED:-true}
+      - WEB_PORT=${WEB_PORT:-18383}
     ports:
       - "${HTTP_PORT:-8080}:8080"
+      - "${WEB_PORT:-18383}:18383"
     volumes:
       - ./data:/app/data
+
+  # 可选解耦容器：通过 `docker compose --profile web up -d` 按需独立拉起或关停纯前端代理容器
+  # （若已在 .env 设 WEB_ENABLED=false 关闭内置网页，可将 WEB_STANDALONE_PORT 设为 18383）
+  cpe-sms-web:
+    build: .
+    container_name: cpe-sms-web
+    profiles: ["web"]
+    restart: unless-stopped
+    command: ["node", "src/cli.js", "web"]
+    depends_on:
+      - cpe-sms
+    environment:
+      - TZ=Asia/Shanghai
+      - WEB_PORT=18383
+      - WEB_UPSTREAM_URL=http://cpe-sms:8080
+    ports:
+      - "${WEB_STANDALONE_PORT:-18384}:18383"

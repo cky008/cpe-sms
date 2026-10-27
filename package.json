@@ -1,7 +1,7 @@
 {
   "name": "cpe-sms",
-  "version": "1.0.0",
-  "description": "Huawei 5G CPE Ultra 6 (H168-383) SMS gateway with SCRAM-SHA256 + Curve25519/AES-256-GCM protocol support, Telegram Bot, and REST/Webhook integration",
+  "version": "1.1.0",
+  "description": "Huawei 5G CPE Ultra 6 (H168-383) SMS gateway with SCRAM-SHA256 + Curve25519/AES-256-GCM protocol support, guided Telegram Bot, real-time daisyUI Web App, and REST/Webhook integration",
   "type": "module",
   "main": "src/index.js",
   "bin": {
@@ -13,10 +13,13 @@
   "scripts": {
     "start": "node src/cli.js daemon",
     "dev": "node --watch src/cli.js daemon",
+    "web": "node src/cli.js web",
+    "build:css": "tailwindcss -i src/web/styles.css -o src/web/public/app.css --minify",
     "cpe:status": "node src/cli.js status",
     "cpe:inbox": "node src/cli.js inbox",
     "cpe:thread": "node src/cli.js thread",
     "cpe:send": "node src/cli.js send",
+    "cpe:sync": "node src/cli.js sync",
     "test": "node --test test/*.test.js"
   },
   "keywords": [
@@ -25,9 +28,15 @@
     "h168-383",
     "sms",
     "telegram-bot",
+    "daisyui",
     "5g-cpe",
     "tailscale",
     "nas"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
+    "daisyui": "^5.7.50",
+    "tailwindcss": "^4.3.3"
+  }
 }

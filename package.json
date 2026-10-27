@@ -1,0 +1,33 @@
+{
+  "name": "cpe-sms",
+  "version": "1.0.0",
+  "description": "Huawei 5G CPE Ultra 6 (H168-383) SMS gateway with SCRAM-SHA256 + Curve25519/AES-256-GCM protocol support, Telegram Bot, and REST/Webhook integration",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "cpe-sms": "./src/cli.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node src/cli.js daemon",
+    "dev": "node --watch src/cli.js daemon",
+    "cpe:status": "node src/cli.js status",
+    "cpe:inbox": "node src/cli.js inbox",
+    "cpe:thread": "node src/cli.js thread",
+    "cpe:send": "node src/cli.js send",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "huawei",
+    "cpe",
+    "h168-383",
+    "sms",
+    "telegram-bot",
+    "5g-cpe",
+    "tailscale",
+    "nas"
+  ],
+  "license": "MIT"
+}

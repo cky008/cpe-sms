@@ -123,13 +123,33 @@ export function loadConfig(options = {}) {
     .map((s) => s.trim())
     .filter(Boolean);
 
+  const rawCountry = (get("DEFAULT_COUNTRY_CODE") ?? "+353").trim();
+  const defaultCountryCode = rawCountry.startsWith("+") ? rawCountry : `+${rawCountry}`;
+
   const pollIntervalMs = Math.max(2000, parseIntSafe(get("POLL_INTERVAL_MS"), 5000));
   const fullSyncIntervalMs = Math.max(15000, parseIntSafe(get("FULL_SYNC_INTERVAL_MS"), 60000));
   const requestTimeoutMs = Math.max(5000, parseIntSafe(get("REQUEST_TIMEOUT_MS"), 20000));
   const seedExistingOnStart = parseBool(get("SEED_EXISTING_ON_START"), true);
   const autoMarkRead = parseBool(get("AUTO_MARK_READ"), false);
-  const stateFile = path.resolve(process.cwd(), get("STATE_FILE") ?? "./data/state.json");
 
+  const stateFile = path.resolve(process.cwd(), get("STATE_FILE") ?? "./data/state.json");
+  const dataDir = path.dirname(stateFile);
+  const archiveFile = path.resolve(
+    process.cwd(),
+    get("ARCHIVE_FILE") ?? path.join(dataDir, "sms-archive.json")
+  );
+  const contactsFile = path.resolve(
+    process.cwd(),
+    get("CONTACTS_FILE") ?? path.join(dataDir, "contacts.json")
+  );
+
+  // Optional daisyUI Real-Time Web UI on high port (default: enabled on 18383)
+  const webEnabled = parseBool(get("WEB_ENABLED", "WEB_UI_ENABLED"), true);
+  const webPort = Math.max(0, parseIntSafe(get("WEB_PORT"), 18383));
+  const webHost = get("WEB_HOST") ?? "0.0.0.0";
+  const webUpstreamUrl = (get("WEB_UPSTREAM_URL") ?? "").replace(/\/+$/, "");
+
+  // Optional separate REST API port (set 0 to disable if using WEB_PORT alone, or keep 8080)
   const httpPort = Math.max(0, parseIntSafe(get("HTTP_PORT", "API_PORT"), 8080));
   const httpHost = get("HTTP_HOST") ?? "0.0.0.0";
   const apiToken = get("API_TOKEN") ?? cpePassword;
@@ -142,12 +162,19 @@ export function loadConfig(options = {}) {
     telegramToken,
     telegramApiBase,
     telegramChatIds,
+    defaultCountryCode,
     pollIntervalMs,
     fullSyncIntervalMs,
     requestTimeoutMs,
     seedExistingOnStart,
     autoMarkRead,
     stateFile,
+    archiveFile,
+    contactsFile,
+    webEnabled,
+    webPort,
+    webHost,
+    webUpstreamUrl,
     httpPort,
     httpHost,
     apiToken,

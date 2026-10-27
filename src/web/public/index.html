@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>H168-383 短信中心 · 实时消息台</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body class="bg-base-200 text-base-content h-dvh overflow-hidden flex flex-col antialiased">
+
+  <!-- Toast Container -->
+  <div id="toastContainer" class="toast toast-top toast-end z-[100] pointer-events-none"></div>
+
+  <!-- 1. Login View -->
+  <main id="loginView" class="hidden flex-1 flex items-center justify-center p-4">
+    <div class="card bg-base-100 w-full max-w-md shadow-xl border border-base-300">
+      <div class="card-body gap-4">
+        <div class="flex items-center gap-3">
+          <div class="w-11 h-11 rounded-2xl bg-primary text-primary-content flex items-center justify-center text-xl font-bold shadow">
+            5G
+          </div>
+          <div>
+            <h1 class="card-title text-lg">H168-383 实时短信中心</h1>
+            <p class="text-xs text-base-content/60">Huawei 5G CPE Ultra 6 · 本地历史与实时收发</p>
+          </div>
+        </div>
+
+        <form id="loginForm" class="space-y-4 pt-2">
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">CPE 管理密码 / API Token</legend>
+            <input
+              id="loginPassword"
+              type="password"
+              class="input input-bordered w-full"
+              placeholder="请输入 .env 中配置的 CPE_PASSWORD"
+              autocomplete="current-password"
+              required
+            />
+            <p class="fieldset-label text-xs text-base-content/60">
+              验证通过后将在本浏览器保持安全会话，不抢占路由器管理后台
+            </p>
+          </fieldset>
+          <div id="loginError" class="alert alert-error text-sm py-2 hidden"></div>
+          <button id="loginSubmitBtn" type="submit" class="btn btn-primary w-full">
+            进入短信中心
+          </button>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <!-- 2. Main Real-Time SMS Workspace -->
+  <div id="appView" class="hidden flex-1 flex flex-col h-full overflow-hidden">
+
+    <!-- Top Navbar -->
+    <header class="navbar bg-base-100 border-b border-base-300 min-h-14 px-3 gap-2 shrink-0">
+      <div class="flex-1 flex items-center gap-2 min-w-0">
+        <button id="mobileBackBtn" class="btn btn-ghost btn-sm btn-circle lg:hidden hidden" title="返回列表">
+          ←
+        </button>
+        <div class="w-8 h-8 rounded-xl bg-primary text-primary-content flex items-center justify-center font-bold text-xs shrink-0">
+          5G
+        </div>
+        <div class="min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="font-bold text-sm sm:text-base truncate">H168-383 短信中心</span>
+            <span id="sseBadge" class="badge badge-xs badge-warning gap-1">连接中</span>
+          </div>
+          <div id="signalSubtitle" class="text-[11px] text-base-content/60 truncate">
+            正在读取设备信号与容量状态...
+          </div>
+        </div>
+      </div>
+
+      <div class="flex-none flex items-center gap-1.5">
+        <button id="newSmsBtn" class="btn btn-primary btn-sm gap-1">
+          <span>✍️</span>
+          <span class="hidden sm:inline">发短信</span>
+        </button>
+
+        <button id="syncAllBtn" class="btn btn-soft btn-sm gap-1" title="从 CPE 拉取全部历史收发件箱短信到本地">
+          <span id="syncIcon">🔄</span>
+          <span class="hidden md:inline">同步历史</span>
+        </button>
+
+        <button id="contactsModalBtn" class="btn btn-ghost btn-sm gap-1" title="管理通讯录或导入 iPhone .vcf">
+          <span>📇</span>
+          <span class="hidden md:inline">通讯录</span>
+          <span id="contactsCountBadge" class="badge badge-xs badge-ghost">0</span>
+        </button>
+
+        <!-- daisyUI Theme Selector -->
+        <div class="dropdown dropdown-end">
+          <div tabindex="0" role="button" class="btn btn-ghost btn-sm px-2" title="切换界面主题">
+            🎨
+          </div>
+          <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-50 w-36 p-1.5 shadow-lg border border-base-300 text-xs">
+            <li><button data-set-theme="light">☀️ 明亮 (Light)</button></li>
+            <li><button data-set-theme="dark">🌙 暗色 (Dark)</button></li>
+            <li><button data-set-theme="nord">❄️ 北欧 (Nord)</button></li>
+            <li><button data-set-theme="emerald">🌿 翡翠 (Emerald)</button></li>
+            <li><button data-set-theme="dim">🌌 柔和暗 (Dim)</button></li>
+            <li><button data-set-theme="cupcake">🧁 纸杯蛋糕</button></li>
+          </ul>
+        </div>
+
+        <button id="logoutBtn" class="btn btn-ghost btn-xs text-base-content/60" title="退出登录">
+          退出
+        </button>
+      </div>
+    </header>
+
+    <!-- Split Workspace -->
+    <div class="flex-1 flex overflow-hidden relative">
+
+      <!-- Left Sidebar: Thread List -->
+      <aside
+        id="sidebarPane"
+        class="w-full lg:w-96 border-r border-base-300 bg-base-100 flex flex-col shrink-0 h-full overflow-hidden"
+      >
+        <div class="p-3 space-y-2.5 border-b border-base-200 shrink-0">
+          <label class="input input-sm input-bordered flex items-center gap-2 w-full">
+            <span class="text-base-content/50">🔍</span>
+            <input
+              id="searchInput"
+              type="search"
+              class="grow"
+              placeholder="搜姓名、号码、国家、内容或验证码..."
+            />
+          </label>
+
+          <div class="flex items-center justify-between gap-2">
+            <div role="tablist" class="tabs tabs-box tabs-xs flex-1">
+              <button role="tab" data-filter="all" class="tab tab-active flex-1">
+                全部 <span id="tabCountAll" class="ml-1 opacity-70">0</span>
+              </button>
+              <button role="tab" data-filter="unread" class="tab flex-1">
+                未读 <span id="tabCountUnread" class="ml-1 text-primary font-semibold">0</span>
+              </button>
+              <button role="tab" data-filter="otp" class="tab flex-1">
+                🔑 验证码
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Thread Items -->
+        <div id="threadList" class="flex-1 overflow-y-auto divide-y divide-base-200"></div>
+
+        <!-- Sidebar Footer Stats -->
+        <div class="px-3 py-2 border-t border-base-200 bg-base-200/40 text-[11px] text-base-content/60 flex items-center justify-between shrink-0">
+          <span id="archiveFooterText">本地归档 0 条</span>
+          <span id="cpeCapFooterText">CPE 0 / 500</span>
+        </div>
+      </aside>
+
+      <!-- Right Main Pane: Conversation View -->
+      <section
+        id="chatPane"
+        class="hidden lg:flex flex-1 flex-col bg-base-200/50 h-full overflow-hidden min-w-0"
+      >
+        <!-- Empty Placeholder -->
+        <div id="emptyChatState" class="flex-1 flex flex-col items-center justify-center p-8 text-center gap-4">
+          <div class="w-16 h-16 rounded-3xl bg-base-100 shadow flex items-center justify-center text-3xl">
+            💬
+          </div>
+          <div class="space-y-1 max-w-sm">
+            <h2 class="font-bold text-base">选择一个短信会话开始阅读或回复</h2>
+            <p class="text-xs text-base-content/60">
+              所有新收到的短信和验证码都会通过 SSE 实时推送到此页面，无需手动刷新。支持国家区号识别与 iPhone 通讯录匹配。
+            </p>
+          </div>
+          <div class="flex gap-2">
+            <button id="emptySyncBtn" class="btn btn-soft btn-sm">🔄 同步 CPE 全部历史短信</button>
+            <button id="emptyNewSmsBtn" class="btn btn-primary btn-sm">✍️ 发送新短信</button>
+          </div>
+        </div>
+
+        <!-- Active Conversation Container -->
+        <div id="activeChatContainer" class="hidden flex-1 flex flex-col h-full overflow-hidden">
+          <!-- Thread Header -->
+          <div class="bg-base-100 border-b border-base-300 px-4 py-2.5 flex items-center justify-between gap-2 shrink-0">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span id="chatHeaderFlag" class="text-lg">📱</span>
+                <h2 id="chatHeaderTitle" class="font-bold text-sm sm:text-base truncate"></h2>
+                <span id="chatHeaderCountryBadge" class="badge badge-ghost badge-sm"></span>
+              </div>
+              <div id="chatHeaderSub" class="text-xs text-base-content/60 truncate"></div>
+            </div>
+
+            <div class="flex items-center gap-1.5 shrink-0">
+              <button id="editNicknameBtn" class="btn btn-ghost btn-xs gap-1" title="给该号码添加或修改姓名备注">
+                ✏️ 备注联系人
+              </button>
+              <button id="markThreadReadBtn" class="btn btn-soft btn-success btn-xs hidden">
+                ✅ 标为已读
+              </button>
+            </div>
+          </div>
+
+          <!-- Messages Scroll Area -->
+          <div id="messagesList" class="flex-1 overflow-y-auto p-4 space-y-3"></div>
+
+          <!-- Non-dialable Sender Banner -->
+          <div id="nonDialableBanner" class="hidden bg-base-100 border-t border-base-300 p-3">
+            <div class="alert alert-info py-2 text-xs">
+              <span>🏢 该发送方为运营商或品牌字母服务号，不支持直接回复短信。</span>
+            </div>
+          </div>
+
+          <!-- Reply Composer -->
+          <form id="replyForm" class="bg-base-100 border-t border-base-300 p-3 space-y-2 shrink-0">
+            <div class="flex items-center justify-between text-[11px] text-base-content/60 px-1">
+              <span id="replyTargetHint">发送至: -</span>
+              <span id="replyEncodingHint">GSM 7-bit · 0 字</span>
+            </div>
+            <div class="flex gap-2 items-end">
+              <textarea
+                id="replyTextarea"
+                rows="2"
+                class="textarea textarea-bordered flex-1 text-sm leading-snug resize-none"
+                placeholder="输入回复短信内容（Ctrl/Cmd + Enter 快捷发送）..."
+              ></textarea>
+              <button id="replySendBtn" type="submit" class="btn btn-primary">
+                发送
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Modal 1: Guided New SMS -->
+  <dialog id="newSmsModal" class="modal">
+    <div class="modal-box max-w-lg">
+      <form method="dialog">
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3">✕</button>
+      </form>
+      <h3 class="font-bold text-lg flex items-center gap-2">✍️ 引导式发送新短信</h3>
+      <p class="text-xs text-base-content/60 mt-1">
+        默认使用爱尔兰区号 (+353)，也可切换其他国家或直接输入带 <code>+</code> 的国际号码。
+      </p>
+
+      <form id="newSmsForm" class="space-y-4 mt-4">
+        <div class="grid grid-cols-1 sm:grid-cols-5 gap-2">
+          <fieldset class="fieldset sm:col-span-2">
+            <legend class="fieldset-legend">默认国家/区号</legend>
+            <select id="newSmsCountrySelect" class="select select-bordered w-full text-sm"></select>
+          </fieldset>
+
+          <fieldset class="fieldset sm:col-span-3">
+            <legend class="fieldset-legend">接收方手机号 / 搜联系人</legend>
+            <input
+              id="newSmsPhoneInput"
+              type="text"
+              class="input input-bordered w-full text-sm"
+              placeholder="如 0831234567 或 +86138... 或输入姓名"
+              required
+            />
+          </fieldset>
+        </div>
+
+        <!-- Quick Contact Suggestions -->
+        <div id="newSmsContactSuggestions" class="flex flex-wrap gap-1.5 hidden"></div>
+
+        <!-- Resolved Recipient Preview -->
+        <div id="newSmsResolvedPreview" class="bg-base-200 rounded-xl px-3 py-2 text-xs text-base-content/80">
+          等待输入接收方号码...
+        </div>
+
+        <fieldset class="fieldset">
+          <div class="flex justify-between items-center">
+            <legend class="fieldset-legend">短信正文</legend>
+            <span id="newSmsModeHint" class="text-[11px] text-base-content/60">7BIT · 1 条</span>
+          </div>
+          <textarea
+            id="newSmsContentInput"
+            rows="4"
+            class="textarea textarea-bordered w-full text-sm"
+            placeholder="请输入要发送的短信内容..."
+            required
+          ></textarea>
+        </fieldset>
+
+        <div class="modal-action">
+          <button type="button" class="btn btn-ghost" onclick="document.getElementById('newSmsModal').close()">取消</button>
+          <button id="newSmsSubmitBtn" type="submit" class="btn btn-primary">🚀 立即发送</button>
+        </div>
+      </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  </dialog>
+
+  <!-- Modal 2: Contacts & iPhone vCard (.vcf) Import -->
+  <dialog id="contactsModal" class="modal">
+    <div class="modal-box max-w-2xl">
+      <form method="dialog">
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3">✕</button>
+      </form>
+      <h3 class="font-bold text-lg">📇 本地通讯录与 iPhone 导入</h3>
+      <p class="text-xs text-base-content/60 mt-1">
+        通讯录仅保存在本地 NAS 的 <code>data/contacts.json</code>，绝不上传云端。支持自动匹配 <code>083...</code> 与 <code>+35383...</code>。
+      </p>
+
+      <!-- vCard Import Drop Box -->
+      <div class="mt-4 p-4 rounded-2xl border-2 border-dashed border-base-300 bg-base-200/50 flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div class="text-xs space-y-0.5">
+          <div class="font-semibold">📲 一键导入 iPhone / Mac / iCloud 通讯录 (<code>.vcf</code>)</div>
+          <div class="text-base-content/60">在 iPhone「通讯录」长按列表选择“导出”生成 .vcf 文件后，在此选择即可自动解析中英文姓名与号码。</div>
+        </div>
+        <label class="btn btn-secondary btn-sm shrink-0 cursor-pointer">
+          选择 .vcf 文件
+          <input id="vcfFileInput" type="file" accept=".vcf,text/vcard" class="hidden" />
+        </label>
+      </div>
+
+      <!-- Manual Quick Add -->
+      <form id="manualContactForm" class="mt-4 grid grid-cols-1 sm:grid-cols-7 gap-2 items-end">
+        <div class="sm:col-span-3">
+          <input id="manualContactPhone" type="text" class="input input-sm input-bordered w-full" placeholder="号码 (如 0831234567 或 +86...)" required />
+        </div>
+        <div class="sm:col-span-2">
+          <input id="manualContactName" type="text" class="input input-sm input-bordered w-full" placeholder="姓名 (如 房东John)" required />
+        </div>
+        <div class="sm:col-span-2 flex gap-1">
+          <input id="manualContactNote" type="text" class="input input-sm input-bordered flex-1 min-w-0" placeholder="备注(可选)" />
+          <button type="submit" class="btn btn-primary btn-sm">保存</button>
+        </div>
+      </form>
+
+      <!-- Contacts Search & Table -->
+      <div class="mt-4 space-y-2">
+        <input id="contactsSearchInput" type="search" class="input input-sm input-bordered w-full" placeholder="搜索已保存联系人姓名或号码..." />
+        <div id="contactsListContainer" class="max-h-64 overflow-y-auto divide-y divide-base-200 border border-base-200 rounded-xl"></div>
+      </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  </dialog>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

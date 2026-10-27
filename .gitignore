@@ -427,6 +427,7 @@ vite.config.ts.timestamp-*
 # Turbo Repo
 .turbo
 
-# Application runtime state (paired Telegram chat IDs, notified SMS cursor)
+# Application runtime state & local private contact exports
 data/
+*.vcf
 

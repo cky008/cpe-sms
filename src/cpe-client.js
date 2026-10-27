@@ -100,6 +100,7 @@ export function normalizePhone(phone) {
  * Parse a `<message>` / `<Message>` XML block into a unified SMS object.
  *
  * @param {string} block
+ * @param {"0" | "1" | null} [defaultCurbox]
  * @returns {{
  *   index: number,
  *   phone: string,
@@ -112,14 +113,17 @@ export function normalizePhone(phone) {
  *   direction: "in" | "out"
  * }}
  */
-export function parseSmsMessageBlock(block) {
+export function parseSmsMessageBlock(block, defaultCurbox = null) {
   const indexStr = getXmlTag(block, "index") ?? "0";
   const phone = getXmlTag(block, "phone") ?? "";
   const content = getXmlTextPreserve(block, "content");
   const date = getXmlTag(block, "date") ?? "";
   const smstat = getXmlTag(block, "smstat") ?? "1";
   const smstype = getXmlTag(block, "smstype") ?? "1";
-  const curbox = getXmlTag(block, "curbox") ?? (smstat === "3" || smstat === "4" ? "1" : "0");
+  const curbox =
+    getXmlTag(block, "curbox") ??
+    defaultCurbox ??
+    (smstat === "3" || smstat === "4" ? "1" : "0");
 
   return {
     index: Number.parseInt(indexStr, 10) || 0,
@@ -129,7 +133,7 @@ export function parseSmsMessageBlock(block) {
     smstat,
     smstype,
     curbox,
-    isUnread: smstat === "0",
+    isUnread: smstat === "0" && curbox !== "1",
     direction: curbox === "1" || smstat === "3" || smstat === "4" ? "out" : "in",
   };
 }
@@ -698,7 +702,7 @@ export class HuaweiCpeClient {
               UnreadPreferred: unreadPreferred,
             })
           );
-          let messages = getXmlBlocks(listXml, "Message").map(parseSmsMessageBlock);
+          let messages = getXmlBlocks(listXml, "Message").map((b) => parseSmsMessageBlock(b, "0"));
           if (opts.unreadOnly) {
             messages = messages.filter((m) => m.isUnread);
           }
@@ -711,13 +715,119 @@ export class HuaweiCpeClient {
             1
           );
           let messages = getXmlBlocks(decXml, "message")
-            .map(parseSmsMessageBlock)
+            .map((b) => parseSmsMessageBlock(b))
             .filter((m) => m.direction === "in");
           if (opts.unreadOnly) {
             messages = messages.filter((m) => m.isUnread);
           }
           return { localUnread, localInbox, localMax, messages };
         }
+      },
+      { respectBrowserSession: Boolean(opts.respectBrowserSession) }
+    );
+  }
+
+  /**
+   * Paginate and fetch ALL historical SMS messages (both LocalInbox and LocalOutbox)
+   * inside a single ephemeral session so the Web UI can load 100% of device history.
+   *
+   * @param {{ respectBrowserSession?: boolean }} [opts]
+   */
+  async fetchAllMessages(opts = {}) {
+    return await this.withSession(
+      async (session) => {
+        const smsCountXml = await session.get("/api/sms/sms-count");
+        const localUnread = Number.parseInt(getXmlTag(smsCountXml, "LocalUnread") ?? "0", 10) || 0;
+        const localInbox = Number.parseInt(getXmlTag(smsCountXml, "LocalInbox") ?? "0", 10) || 0;
+        const localOutbox = Number.parseInt(getXmlTag(smsCountXml, "LocalOutbox") ?? "0", 10) || 0;
+        const localMax = Number.parseInt(getXmlTag(smsCountXml, "LocalMax") ?? "500", 10) || 500;
+
+        /** @type {Array<ReturnType<typeof parseSmsMessageBlock>>} */
+        const all = [];
+        const pageSize = 50;
+
+        try {
+          const inboxPages = Math.ceil(localInbox / pageSize);
+          for (let page = 1; page <= inboxPages; page++) {
+            const xml = await session.postRaw(
+              "/api/sms/sms-list",
+              buildXmlRequest({
+                PageIndex: page,
+                ReadCount: pageSize,
+                BoxType: 1,
+                SortType: 0,
+                Ascending: 0,
+                UnreadPreferred: 0,
+              })
+            );
+            const items = getXmlBlocks(xml, "Message").map((b) => parseSmsMessageBlock(b, "0"));
+            all.push(...items);
+            if (items.length < pageSize) break;
+          }
+
+          const outboxPages = Math.ceil(localOutbox / pageSize);
+          for (let page = 1; page <= outboxPages; page++) {
+            const xml = await session.postRaw(
+              "/api/sms/sms-list",
+              buildXmlRequest({
+                PageIndex: page,
+                ReadCount: pageSize,
+                BoxType: 2,
+                SortType: 0,
+                Ascending: 0,
+                UnreadPreferred: 0,
+              })
+            );
+            const items = getXmlBlocks(xml, "Message").map((b) => parseSmsMessageBlock(b, "1"));
+            all.push(...items);
+            if (items.length < pageSize) break;
+          }
+        } catch {
+          // Encrypted session-SMS pagination fallback (`sms-list-contact` + `sms-list-phone`)
+          const countContactXml = await session.get("/api/sms/sms-count-contact");
+          const totalContacts =
+            Number.parseInt(getXmlTag(countContactXml, "count") ?? "0", 10) || 0;
+          const contactPages = Math.ceil(totalContacts / 20);
+          const phones = new Set();
+
+          for (let p = 1; p <= contactPages; p++) {
+            const decContacts = await session.postEncrypted(
+              "/api/sms/sms-list-contact",
+              { pageindex: p, readcount: 20 },
+              1
+            );
+            for (const b of getXmlBlocks(decContacts, "message")) {
+              const ph = getXmlTag(b, "phone");
+              if (ph) phones.add(ph);
+            }
+          }
+
+          for (const ph of phones) {
+            const cXml = await session.postEncrypted(
+              "/api/sms/sms-count-contact",
+              { phone: huaweiXssEncode(ph) },
+              2
+            );
+            const phTotal = Number.parseInt(getXmlTag(cXml, "count") ?? "0", 10) || 0;
+            const phPages = Math.ceil(phTotal / 20);
+            for (let p = 1; p <= phPages; p++) {
+              const decPhone = await session.postEncrypted(
+                "/api/sms/sms-list-phone",
+                { phone: escapeXmlBasic(ph), pageindex: p, readcount: 20 },
+                3
+              );
+              all.push(...getXmlBlocks(decPhone, "message").map((b) => parseSmsMessageBlock(b)));
+            }
+          }
+        }
+
+        return {
+          localUnread,
+          localInbox,
+          localOutbox,
+          localMax,
+          messages: all,
+        };
       },
       { respectBrowserSession: Boolean(opts.respectBrowserSession) }
     );

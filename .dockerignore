@@ -3,8 +3,12 @@
 .env
 .env.*
 node_modules
+dist
+coverage
 data
 test
+*.vcf
 README.md
+AGENTS.md
 *.log
 .DS_Store

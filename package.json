@@ -25,6 +25,7 @@
     "cpe:send": "node src/cli.ts send",
     "cpe:sync": "node src/cli.ts sync",
     "cpe:import-vcf": "node src/cli.ts import-vcf",
+    "preview:telegram": "node scripts/telegram-style-preview.ts",
     "test": "node --test test/*.test.ts",
     "test:coverage": "c8 --include='src/**/*.ts' --exclude='src/cli.ts' --exclude='src/types.ts' --exclude='src/web/**' --reporter=text --check-coverage --lines 90 --functions 95 --statements 90 node --test test/*.test.ts",
     "audit:secrets": "node scripts/audit-secrets.ts",

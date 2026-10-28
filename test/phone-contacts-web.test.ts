@@ -471,7 +471,7 @@ test("TelegramSmsBot supports /auth, Guided Send SMS Wizard (+353 & country swit
     update_id: 3,
     message: { message_id: 10, chat: { id: 99001 }, text: "/new" },
   });
-  assert.match(String(tgCalls.at(-1)?.payload.text), /第 1\/2 步.*爱尔兰 \(\+353\)/s);
+  assert.match(String(tgCalls.at(-1)?.payload.text), /第 1 步：选择收件人.*爱尔兰 \(\+353\)/s);
 
   await bot.handleUpdate({
     update_id: 4,
@@ -494,13 +494,13 @@ test("TelegramSmsBot supports /auth, Guided Send SMS Wizard (+353 & country swit
     update_id: 6,
     message: { message_id: 11, chat: { id: 99001 }, text: "083 777 6666" },
   });
-  assert.match(String(tgCalls.at(-1)?.payload.text), /第 2\/2 步.*\+353837776666/s);
+  assert.match(String(tgCalls.at(-1)?.payload.text), /第 2 步：输入正文.*\+353837776666/s);
 
   await bot.handleUpdate({
     update_id: 7,
     message: { message_id: 12, chat: { id: 99001 }, text: "你好，快递到了吗？" },
   });
-  assert.match(String(tgCalls.at(-1)?.payload.text), /确认预览.*UCS2/s);
+  assert.match(String(tgCalls.at(-1)?.payload.text), /确认发送.*UCS2/s);
 
   await bot.handleUpdate({
     update_id: 8,
@@ -526,7 +526,7 @@ test("TelegramSmsBot supports /auth, Guided Send SMS Wizard (+353 & country swit
       },
     },
   });
-  assert.match(String(tgCalls.at(-1)?.payload.text), /通讯录导入成功/);
+  assert.match(String(tgCalls.at(-1)?.payload.text), /通讯录已导入/);
 
   // 3. Commands: /help, /inbox, /unread, /chat, /contacts, /contact, /read, /delete
   for (const [idx, cmdText] of [
@@ -560,7 +560,7 @@ test("TelegramSmsBot supports /auth, Guided Send SMS Wizard (+353 & country swit
   const notifyMsgId = 500 + tgCalls.length;
   const pushHtml = String(tgCalls.at(-1)?.payload.text);
   assert.match(pushHtml, /Liam O'Connor/);
-  assert.match(pushHtml, /🇮🇪.*爱尔兰 \(\+353\)/);
+  assert.match(pushHtml, /爱尔兰 \(\+353\).*\+353879990000/);
 
   await bot.handleUpdate({
     update_id: 50,

@@ -174,3 +174,9 @@ test("HTTP server sets Secure cookie behind HTTPS reverse proxy (sms.example.com
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+test("Repository tracks empty data/.gitkeep so Synology DSM bind mount ./data always exists after clone", () => {
+  const gitkeepPath = path.resolve(process.cwd(), "data", ".gitkeep");
+  assert.equal(fs.existsSync(gitkeepPath), true);
+  assert.equal(fs.readFileSync(gitkeepPath, "utf8"), "");
+});

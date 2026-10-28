@@ -427,7 +427,8 @@ vite.config.ts.timestamp-*
 # Turbo Repo
 .turbo
 
-# Application runtime state & local private contact exports
-data/
+# Application runtime state & local private contact exports (keep empty data/.gitkeep for Synology DSM bind mounts)
+data/*
+!data/.gitkeep
 *.vcf
 

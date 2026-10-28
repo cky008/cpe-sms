@@ -61,10 +61,19 @@ function main(): void {
     .filter(Boolean);
 
   const forbiddenTracked = trackedFiles.filter(
-    (f) => f === ".env" || f.startsWith("data/") || f.endsWith(".vcf") || f.endsWith(".pem")
+    (f) =>
+      f === ".env" ||
+      (f.startsWith("data/") && f !== "data/.gitkeep") ||
+      f.endsWith(".vcf") ||
+      f.endsWith(".pem")
   );
   if (forbiddenTracked.length > 0) {
     console.error("❌ Forbidden sensitive files are tracked in git:", forbiddenTracked);
+    process.exit(1);
+  }
+  const gitkeepFile = path.join(root, "data", ".gitkeep");
+  if (fs.existsSync(gitkeepFile) && fs.readFileSync(gitkeepFile, "utf8").length > 0) {
+    console.error("❌ data/.gitkeep must remain empty (0 bytes).");
     process.exit(1);
   }
 

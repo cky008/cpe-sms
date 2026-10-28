@@ -1,27 +1,22 @@
 import crypto from "node:crypto";
-import { detectSmsTextMode, extractVerificationCode } from "./crypto.js";
-import { isDialablePhone } from "./cpe-client.js";
-import {
-  getCountryByDialCode,
-  parseSenderInfo,
-  resolveRecipientPhone,
-} from "./phone.js";
-import { formatHuaweiDate } from "./xml.js";
+import type { ContactStore } from "./contacts.ts";
+import { type HuaweiCpeClient, isDialablePhone } from "./cpe-client.ts";
+import { detectSmsTextMode, extractVerificationCode } from "./crypto.ts";
+import { getCountryByDialCode, parseSenderInfo, resolveRecipientPhone } from "./phone.ts";
+import type { SmsPoller } from "./poller.ts";
+import type { SmsArchiveStore } from "./sms-archive.ts";
+import type { StateStore } from "./state-store.ts";
+import type { ContactRecord, SenderInfo, SmsMessage } from "./types.ts";
+import { formatHuaweiDate } from "./xml.ts";
 
-/**
- * Escape text for Telegram `parse_mode: "HTML"`.
- *
- * @param {string | number} text
- * @returns {string}
- */
-export function escapeTelegramHtml(text) {
+export function escapeTelegramHtml(text: string | number): string {
   return String(text ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
 
-function safeEqualString(a, b) {
+function safeEqualString(a: string, b: string): boolean {
   if (!a || !b) return false;
   const bufA = Buffer.from(a, "utf8");
   const bufB = Buffer.from(b, "utf8");
@@ -29,14 +24,7 @@ function safeEqualString(a, b) {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
-/**
- * Build a safe `callback_data` string within Telegram's 64-byte limit.
- *
- * @param {string} prefix
- * @param {string | number} arg
- * @returns {string | null}
- */
-function makeCallbackData(prefix, arg) {
+function makeCallbackData(prefix: string, arg: string | number): string | null {
   const full = `${prefix}:${arg}`;
   return Buffer.byteLength(full, "utf8") <= 64 ? full : null;
 }
@@ -47,34 +35,78 @@ const WIZARD_QUICK_COUNTRIES = [
   { code: "+44", label: "🇬🇧 英国 +44" },
   { code: "+1", label: "🇺🇸 美加 +1" },
   { code: "+852", label: "🇭🇰 香港 +852" },
-];
+] as const;
 
 const WIZARD_TTL_MS = 15 * 60 * 1000;
 
-/**
- * Bidirectional Telegram Bot for H168-383 CPE SMS management:
- * - Real-time incoming SMS push with country flag, contact name, brand hint, and tap-to-copy OTP
- * - Guided multi-step interactive Send SMS wizard (defaulting to Ireland `+353`, switchable to any country)
- * - Direct Reply-to-Message SMS sending
- * - Direct iPhone `.vcf` vCard file upload to import contacts
- */
+interface WizardSession {
+  step: "awaiting_phone" | "awaiting_content" | "awaiting_confirm";
+  countryCode: string;
+  phone?: string;
+  phoneLabel?: string;
+  content?: string;
+  expiresAt: number;
+}
+
+export interface TelegramUpdate {
+  update_id: number;
+  message?: {
+    message_id?: number;
+    chat?: { id?: number | string };
+    text?: string;
+    reply_to_message?: { message_id?: number };
+    document?: {
+      file_id: string;
+      file_name?: string;
+      mime_type?: string;
+    };
+  };
+  callback_query?: {
+    id: string;
+    data?: string;
+    message?: {
+      message_id?: number;
+      chat?: { id?: number | string };
+    };
+  };
+}
+
+export interface TelegramSmsBotOptions {
+  token: string;
+  apiBase?: string;
+  allowedChatIds?: string[];
+  defaultCountryCode?: string;
+  cpePassword: string;
+  cpeClient: HuaweiCpeClient;
+  stateStore: StateStore;
+  contactStore?: ContactStore;
+  archiveStore?: SmsArchiveStore;
+  poller?: SmsPoller;
+  fetchImpl?: typeof fetch;
+}
+
 export class TelegramSmsBot {
-  /**
-   * @param {{
-   *   token: string,
-   *   apiBase?: string,
-   *   allowedChatIds?: string[],
-   *   defaultCountryCode?: string,
-   *   cpePassword: string,
-   *   cpeClient: import("./cpe-client.js").HuaweiCpeClient,
-   *   stateStore: import("./state-store.js").StateStore,
-   *   contactStore?: import("./contacts.js").ContactStore,
-   *   archiveStore?: import("./sms-archive.js").SmsArchiveStore,
-   *   poller?: import("./poller.js").SmsPoller,
-   *   fetchImpl?: typeof fetch
-   * }} opts
-   */
-  constructor(opts) {
+  readonly token: string;
+  readonly apiBase: string;
+  readonly allowedChatIds: string[];
+  readonly defaultCountryCode: string;
+  readonly cpePassword: string;
+  readonly cpeClient: HuaweiCpeClient;
+  readonly stateStore: StateStore;
+  readonly contactStore: ContactStore | null;
+  readonly archiveStore: SmsArchiveStore | null;
+  readonly poller: SmsPoller | null;
+  readonly fetchImpl: typeof fetch;
+
+  botInfo: { id?: number; username?: string } | null;
+
+  #running: boolean;
+  #offset: number;
+  #pollAbort: AbortController | null;
+  #failedAuthAttempts: Map<string, { count: number; resetAt: number }>;
+  #wizards: Map<string, WizardSession>;
+
+  constructor(opts: TelegramSmsBotOptions) {
     this.token = opts.token;
     this.apiBase = (opts.apiBase ?? "https://api.telegram.org").replace(/\/+$/, "");
     this.allowedChatIds = (opts.allowedChatIds ?? []).map(String);
@@ -90,38 +122,16 @@ export class TelegramSmsBot {
     this.botInfo = null;
     this.#running = false;
     this.#offset = 0;
-    /** @type {AbortController | null} */
     this.#pollAbort = null;
-    /** @type {Map<string, { count: number, resetAt: number }>} */
     this.#failedAuthAttempts = new Map();
-    /**
-     * Guided send wizard sessions keyed by `chatId`.
-     * @type {Map<string, {
-     *   step: "awaiting_phone" | "awaiting_content" | "awaiting_confirm",
-     *   countryCode: string,
-     *   phone?: string,
-     *   phoneLabel?: string,
-     *   content?: string,
-     *   expiresAt: number
-     * }>}
-     */
     this.#wizards = new Map();
   }
 
-  #running;
-  #offset;
-  #pollAbort;
-  #failedAuthAttempts;
-  #wizards;
-
-  /**
-   * Call a Telegram Bot API method.
-   *
-   * @param {string} method
-   * @param {Record<string, unknown>} [payload]
-   * @param {{ timeoutMs?: number, signal?: AbortSignal }} [opts]
-   */
-  async callApi(method, payload = {}, opts = {}) {
+  async callApi<T = Record<string, unknown>>(
+    method: string,
+    payload: Record<string, unknown> = {},
+    opts: { timeoutMs?: number; signal?: AbortSignal } = {}
+  ): Promise<T> {
     const url = `${this.apiBase}/bot${this.token}/${method}`;
     const timeoutSignal = AbortSignal.timeout(opts.timeoutMs ?? 20000);
     const signal = opts.signal
@@ -135,21 +145,22 @@ export class TelegramSmsBot {
       signal,
     });
 
-    const data = await res.json();
+    const data = (await res.json()) as {
+      ok: boolean;
+      result: T;
+      error_code?: number;
+      description?: string;
+    };
     if (!data.ok) {
-      throw new Error(`Telegram API ${method} failed (${data.error_code}): ${data.description}`);
+      throw new Error(
+        `Telegram API ${method} failed (${data.error_code ?? res.status}): ${data.description ?? ""}`
+      );
     }
     return data.result;
   }
 
-  /**
-   * Download a file sent to the Telegram bot (e.g. `.vcf` contacts export from iPhone).
-   *
-   * @param {string} fileId
-   * @returns {Promise<string>}
-   */
-  async downloadTelegramFileText(fileId) {
-    const fileMeta = await this.callApi("getFile", { file_id: fileId });
+  async downloadTelegramFileText(fileId: string): Promise<string> {
+    const fileMeta = await this.callApi<{ file_path?: string }>("getFile", { file_id: fileId });
     if (!fileMeta?.file_path) {
       throw new Error("无法获取 Telegram 文件路径");
     }
@@ -161,13 +172,16 @@ export class TelegramSmsBot {
     return await res.text();
   }
 
-  /**
-   * Format rich sender header line with Contact Name + Country Flag + Country Name + Number.
-   *
-   * @param {string} rawPhone
-   * @param {string} [smsContent=""]
-   */
-  formatSenderSummary(rawPhone, smsContent = "") {
+  formatSenderSummary(
+    rawPhone: string,
+    smsContent = ""
+  ): {
+    sender: SenderInfo;
+    contact: ContactRecord | null;
+    whoLine: string;
+    phoneLine: string;
+    shortTitle: string;
+  } {
     const sender = parseSenderInfo(rawPhone, smsContent, this.defaultCountryCode);
     const contact = this.contactStore?.resolvePhone(rawPhone) ?? null;
 
@@ -201,12 +215,9 @@ export class TelegramSmsBot {
     };
   }
 
-  /**
-   * Start Telegram Bot command registration and long-polling loop.
-   */
-  async start() {
+  async start(): Promise<void> {
     if (!this.token || this.#running) return;
-    this.botInfo = await this.callApi("getMe");
+    this.botInfo = await this.callApi<{ id?: number; username?: string }>("getMe");
     await this.callApi("setMyCommands", {
       commands: [
         { command: "new", description: "✍️ 引导式发送短信（默认爱尔兰 +353，可选任意国家）" },
@@ -222,10 +233,10 @@ export class TelegramSmsBot {
     }).catch(() => {});
 
     this.#running = true;
-    this.#pollLoop();
+    void this.#pollLoop();
   }
 
-  stop() {
+  stop(): void {
     this.#running = false;
     if (this.#pollAbort) {
       this.#pollAbort.abort();
@@ -233,12 +244,12 @@ export class TelegramSmsBot {
     }
   }
 
-  async #pollLoop() {
+  async #pollLoop(): Promise<void> {
     let backoffMs = 1500;
     while (this.#running) {
       this.#pollAbort = new AbortController();
       try {
-        const updates = await this.callApi(
+        const updates = await this.callApi<TelegramUpdate[]>(
           "getUpdates",
           {
             offset: this.#offset,
@@ -250,30 +261,27 @@ export class TelegramSmsBot {
         backoffMs = 1500;
         for (const update of updates) {
           this.#offset = Math.max(this.#offset, update.update_id + 1);
-          this.handleUpdate(update).catch((err) => {
-            console.error("[TelegramBot] Update handler error:", err.message);
+          this.handleUpdate(update).catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error("[TelegramBot] Update handler error:", msg);
           });
         }
       } catch (err) {
         if (!this.#running) break;
-        if (err.name === "AbortError") continue;
-        console.warn(`[TelegramBot] Poll error (${err.message}), retrying in ${backoffMs}ms...`);
+        if (err instanceof Error && err.name === "AbortError") continue;
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[TelegramBot] Poll error (${msg}), retrying in ${backoffMs}ms...`);
         await new Promise((r) => setTimeout(r, backoffMs));
         backoffMs = Math.min(30000, backoffMs * 2);
       }
     }
   }
 
-  /**
-   * Push a newly arrived SMS notification to all authorized Telegram chats.
-   *
-   * @param {ReturnType<import("./cpe-client.js").parseSmsMessageBlock> & { verificationCode?: string | null }} sms
-   */
-  async notifyNewSms(sms) {
+  async notifyNewSms(sms: SmsMessage): Promise<void> {
     const targets = this.stateStore.getAllAuthorizedChats(this.allowedChatIds);
     if (targets.length === 0) {
       console.warn(
-        `[TelegramBot] 收到来自 ${sms.phone} 的新短信 (#${sms.index})，但尚未绑定授权 Telegram 会话。请在 Telegram 向 @${this.botInfo?.username ?? "bot"} 发送 /start 完成绑定。`
+        `[TelegramBot] 收到来自 ${sms.phone} 的新短信 (#${sms.index})，但尚未绑定授权 Telegram 会话。`
       );
       return;
     }
@@ -297,8 +305,7 @@ export class TelegramSmsBot {
       lines.push("", `💡 <i>直接「回复」本消息即可发短信给 ${escapeTelegramHtml(replyNumber)}</i>`);
     }
 
-    /** @type {Array<Array<{ text: string, callback_data: string }>>} */
-    const row = [];
+    const row: Array<{ text: string; callback_data: string }> = [];
     const readCb = makeCallbackData("read", sms.index);
     const chatCb = makeCallbackData("chat", sms.phone);
     const delCb = makeCallbackData("del", sms.index);
@@ -308,7 +315,7 @@ export class TelegramSmsBot {
 
     for (const chatId of targets) {
       try {
-        const sent = await this.callApi("sendMessage", {
+        const sent = await this.callApi<{ message_id?: number }>("sendMessage", {
           chat_id: chatId,
           text: lines.join("\n"),
           parse_mode: "HTML",
@@ -318,19 +325,21 @@ export class TelegramSmsBot {
           this.stateStore.bindReplyTarget(chatId, sent.message_id, replyNumber);
         }
       } catch (err) {
-        console.error(`[TelegramBot] Failed to notify chat ${chatId}:`, err.message);
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[TelegramBot] Failed to notify chat ${chatId}:`, msg);
       }
     }
   }
 
-  /**
-   * Push storage capacity alert to authorized chats.
-   *
-   * @param {{ localInbox: number, localMax: number, storageFull: boolean }} info
-   */
-  async notifyStorageWarning(info) {
+  async notifyStorageWarning(info: {
+    localInbox: number;
+    localMax: number;
+    storageFull: boolean;
+  }): Promise<void> {
     const targets = this.stateStore.getAllAuthorizedChats(this.allowedChatIds);
-    const title = info.storageFull ? "🚨 <b>CPE 短信存储已满！</b>" : "⚠️ <b>CPE 短信存储即将占满</b>";
+    const title = info.storageFull
+      ? "🚨 <b>CPE 短信存储已满！</b>"
+      : "⚠️ <b>CPE 短信存储即将占满</b>";
     const text = [
       title,
       `当前收件箱容量：<b>${info.localInbox} / ${info.localMax}</b>`,
@@ -346,12 +355,7 @@ export class TelegramSmsBot {
     }
   }
 
-  /**
-   * Process a single Telegram Update (`message` or `callback_query`).
-   *
-   * @param {any} update
-   */
-  async handleUpdate(update) {
+  async handleUpdate(update: TelegramUpdate): Promise<void> {
     if (update.callback_query) {
       await this.#handleCallbackQuery(update.callback_query);
       return;
@@ -361,7 +365,7 @@ export class TelegramSmsBot {
     }
   }
 
-  #isAuthRateLimited(chatId) {
+  #isAuthRateLimited(chatId: string): boolean {
     const entry = this.#failedAuthAttempts.get(chatId);
     if (!entry) return false;
     if (Date.now() > entry.resetAt) {
@@ -371,7 +375,7 @@ export class TelegramSmsBot {
     return entry.count >= 5;
   }
 
-  #recordFailedAuth(chatId) {
+  #recordFailedAuth(chatId: string): void {
     const now = Date.now();
     const cur = this.#failedAuthAttempts.get(chatId);
     if (!cur || now > cur.resetAt) {
@@ -381,12 +385,7 @@ export class TelegramSmsBot {
     }
   }
 
-  /**
-   * Get active non-expired wizard session for a chat.
-   *
-   * @param {string} chatId
-   */
-  #getWizard(chatId) {
+  #getWizard(chatId: string): WizardSession | null {
     const w = this.#wizards.get(chatId);
     if (!w) return null;
     if (Date.now() > w.expiresAt) {
@@ -396,12 +395,9 @@ export class TelegramSmsBot {
     return w;
   }
 
-  /**
-   * Build inline keyboard for Step 1 of Guided Send Wizard.
-   *
-   * @param {string} activeCode
-   */
-  #buildWizardPhoneKeyboard(activeCode) {
+  #buildWizardPhoneKeyboard(activeCode: string): {
+    inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+  } {
     const btns = WIZARD_QUICK_COUNTRIES.map((c) => ({
       text: c.code === activeCode ? `${c.label} ✓` : c.label,
       callback_data: `wizcc:${c.code}`,
@@ -415,12 +411,7 @@ export class TelegramSmsBot {
     };
   }
 
-  /**
-   * Build Step 1 prompt HTML for Guided Send Wizard.
-   *
-   * @param {string} activeCode
-   */
-  #buildWizardPhonePromptHtml(activeCode) {
+  #buildWizardPhonePromptHtml(activeCode: string): string {
     const country = getCountryByDialCode(activeCode);
     const label = country ? `${country.flag} ${country.nameZh} (${country.code})` : activeCode;
     const example =
@@ -445,13 +436,7 @@ export class TelegramSmsBot {
     ].join("\n");
   }
 
-  /**
-   * Start Guided Send SMS Wizard for a chat.
-   *
-   * @param {string} chatId
-   * @param {string} [initialCountry]
-   */
-  async startSendWizard(chatId, initialCountry = this.defaultCountryCode) {
+  async startSendWizard(chatId: string, initialCountry = this.defaultCountryCode): Promise<void> {
     this.#wizards.set(chatId, {
       step: "awaiting_phone",
       countryCode: initialCountry,
@@ -462,20 +447,13 @@ export class TelegramSmsBot {
     });
   }
 
-  /**
-   * Process user input during an active Guided Send SMS Wizard.
-   *
-   * @param {string} chatId
-   * @param {string} text
-   */
-  async #handleWizardInput(chatId, text) {
+  async #handleWizardInput(chatId: string, text: string): Promise<boolean> {
     const wiz = this.#getWizard(chatId);
     if (!wiz) return false;
 
     wiz.expiresAt = Date.now() + WIZARD_TTL_MS;
 
     if (wiz.step === "awaiting_phone") {
-      // Check if user typed a contact name (contains letters/CJK)
       if (/[A-Za-z\u4e00-\u9fa5]/.test(text) && this.contactStore) {
         const matches = this.contactStore.search(text, 8);
         if (matches.length === 0) {
@@ -486,12 +464,11 @@ export class TelegramSmsBot {
           );
           return true;
         }
-        if (matches.length === 1 && matches[0].phones.length === 1) {
+        if (matches.length === 1 && matches[0]?.phones.length === 1 && matches[0].phones[0]) {
           return await this.#advanceWizardToContent(chatId, matches[0].phones[0]);
         }
 
-        /** @type {Array<Array<{ text: string, callback_data: string }>>} */
-        const rows = [];
+        const rows: Array<Array<{ text: string; callback_data: string }>> = [];
         for (const c of matches) {
           for (const ph of c.phones.slice(0, 2)) {
             const cb = makeCallbackData("wizpick", ph);
@@ -534,7 +511,7 @@ export class TelegramSmsBot {
       const previewHtml = [
         `📋 <b>引导式发送短信 · 确认预览</b>`,
         ``,
-        `📞 <b>收件人：</b>${wiz.phoneLabel}`,
+        `📞 <b>收件人：</b>${wiz.phoneLabel ?? ""}`,
         `📊 <b>编码与条数：</b>${modeInfo.encoding}（预计 <b>${modeInfo.segments}</b> 条短信）`,
         ``,
         `💬 <b>短信内容：</b>`,
@@ -559,21 +536,17 @@ export class TelegramSmsBot {
     }
 
     if (wiz.step === "awaiting_confirm") {
-      // Allow typing new content directly or remind them to tap confirm
-      await this.#sendHtml(chatId, `👆 请点击上方「🚀 确认立即发送」按钮发出短信，或点击「❌ 取消」。`);
+      await this.#sendHtml(
+        chatId,
+        `👆 请点击上方「🚀 确认立即发送」按钮发出短信，或点击「❌ 取消」。`
+      );
       return true;
     }
 
     return false;
   }
 
-  /**
-   * Transition wizard to Step 2 (`awaiting_content`) once a dialable phone is chosen.
-   *
-   * @param {string} chatId
-   * @param {string} normalizedPhone
-   */
-  async #advanceWizardToContent(chatId, normalizedPhone) {
+  async #advanceWizardToContent(chatId: string, normalizedPhone: string): Promise<boolean> {
     const wiz = this.#getWizard(chatId);
     if (!wiz) return false;
     const summary = this.formatSenderSummary(normalizedPhone);
@@ -605,16 +578,12 @@ export class TelegramSmsBot {
     return true;
   }
 
-  /**
-   * @param {any} msg
-   */
-  async #handleMessage(msg) {
+  async #handleMessage(msg: NonNullable<TelegramUpdate["message"]>): Promise<void> {
     const chatId = String(msg.chat?.id ?? "");
     if (!chatId) return;
 
     const authorized = this.stateStore.isChatAuthorized(chatId, this.allowedChatIds);
 
-    // Handle `.vcf` contact document upload directly in Telegram!
     if (msg.document && authorized && this.contactStore) {
       const fileName = String(msg.document.file_name ?? "");
       const mime = String(msg.document.mime_type ?? "");
@@ -631,11 +600,12 @@ export class TelegramSmsBot {
               `• 新增联系人：<b>${stats.added}</b> 位，合并更新：<b>${stats.updated}</b> 位`,
               `• 当前本地通讯录总计：<b>${stats.total}</b> 位`,
               ``,
-              `<i>数据仅保存在本地 data/contacts.json，后续来电/短信与发信向导会自动匹配姓名。</i>`,
+              `<i>数据已通过 AES-256-GCM 加密保存在本地 data/contacts.json。</i>`,
             ].join("\n")
           );
         } catch (err) {
-          await this.#sendHtml(chatId, `❌ 导入 vCard 失败：${escapeTelegramHtml(err.message)}`);
+          const errMsg = err instanceof Error ? err.message : String(err);
+          await this.#sendHtml(chatId, `❌ 导入 vCard 失败：${escapeTelegramHtml(errMsg)}`);
         }
         return;
       }
@@ -644,7 +614,6 @@ export class TelegramSmsBot {
     const text = (msg.text ?? "").trim();
     if (!text) return;
 
-    // Handle `/auth <password>` even before authorization
     if (/^\/auth(?:@\S+)?(?:\s+|$)/i.test(text)) {
       const arg = text.replace(/^\/auth(?:@\S+)?\s*/i, "");
       if (msg.message_id) {
@@ -693,14 +662,11 @@ export class TelegramSmsBot {
           ``,
           `请发送以下命令完成安全绑定：`,
           `<code>/auth 你的CPE管理界面密码</code>`,
-          ``,
-          `<i>提示：验证成功后包含密码的消息会自动删除；你也可以将该 Chat ID 写入 .env 的 TELEGRAM_CHAT_IDS。</i>`,
         ].join("\n")
       );
       return;
     }
 
-    // Cancel any active wizard via `/cancel`
     if (/^\/cancel(?:@\S+)?$/i.test(text)) {
       if (this.#wizards.delete(chatId)) {
         await this.#sendHtml(chatId, `✅ 已取消当前发送短信向导。`);
@@ -710,7 +676,6 @@ export class TelegramSmsBot {
       return;
     }
 
-    // Native Reply-to-Message -> Send SMS directly (overrides wizard if replying to a specific bubble)
     if (!text.startsWith("/") && msg.reply_to_message?.message_id) {
       const targetPhone = this.stateStore.getReplyTarget(chatId, msg.reply_to_message.message_id);
       if (targetPhone) {
@@ -727,7 +692,6 @@ export class TelegramSmsBot {
       }
     }
 
-    // Route plain text into active Guided Send Wizard if one is open!
     if (!text.startsWith("/") && this.#getWizard(chatId)) {
       await this.#handleWizardInput(chatId, text);
       return;
@@ -747,10 +711,9 @@ export class TelegramSmsBot {
       return;
     }
 
-    // Starting any new slash command clears stale wizard state
     this.#wizards.delete(chatId);
 
-    const cmd = cmdMatch[1].toLowerCase();
+    const cmd = (cmdMatch[1] ?? "").toLowerCase();
     const rest = (cmdMatch[2] ?? "").trim();
 
     switch (cmd) {
@@ -807,10 +770,9 @@ export class TelegramSmsBot {
     }
   }
 
-  /**
-   * @param {any} cq
-   */
-  async #handleCallbackQuery(cq) {
+  async #handleCallbackQuery(
+    cq: NonNullable<TelegramUpdate["callback_query"]>
+  ): Promise<void> {
     const chatId = String(cq.message?.chat?.id ?? "");
     const messageId = cq.message?.message_id;
     const data = String(cq.data ?? "");
@@ -828,7 +790,6 @@ export class TelegramSmsBot {
     const arg = colon >= 0 ? data.slice(colon + 1) : "";
 
     try {
-      // Wizard callbacks
       if (action === "wizstart") {
         await this.callApi("answerCallbackQuery", { callback_query_id: cq.id });
         await this.startSendWizard(chatId);
@@ -851,8 +812,8 @@ export class TelegramSmsBot {
         return;
       }
       if (action === "wizcc") {
-        const wiz = this.#getWizard(chatId) ?? {
-          step: /** @type {const} */ ("awaiting_phone"),
+        const wiz: WizardSession = this.#getWizard(chatId) ?? {
+          step: "awaiting_phone",
           countryCode: arg,
           expiresAt: Date.now() + WIZARD_TTL_MS,
         };
@@ -910,7 +871,6 @@ export class TelegramSmsBot {
         return;
       }
 
-      // Standard SMS management callbacks
       if (action === "read") {
         await this.cpeClient.markRead([arg]);
         this.archiveStore?.markReadByCpeIndices([arg]);
@@ -919,7 +879,10 @@ export class TelegramSmsBot {
           text: `✅ 短信 #${arg} 已设为已读`,
         });
       } else if (action === "readall") {
-        const inbox = await this.cpeClient.fetchRecentInboxMessages({ count: 50, unreadOnly: true });
+        const inbox = await this.cpeClient.fetchRecentInboxMessages({
+          count: 50,
+          unreadOnly: true,
+        });
         const ids = (inbox?.messages ?? []).map((m) => m.index);
         if (ids.length > 0) {
           await this.cpeClient.markRead(ids);
@@ -952,21 +915,21 @@ export class TelegramSmsBot {
         await this.callApi("answerCallbackQuery", { callback_query_id: cq.id });
       }
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
       await this.callApi("answerCallbackQuery", {
         callback_query_id: cq.id,
-        text: `操作失败: ${err.message.slice(0, 120)}`,
+        text: `操作失败: ${errMsg.slice(0, 120)}`,
         show_alert: true,
       }).catch(() => {});
     }
   }
 
-  /**
-   * @param {string} chatId
-   * @param {string} html
-   * @param {Record<string, unknown>} [extra]
-   */
-  async #sendHtml(chatId, html, extra = {}) {
-    return await this.callApi("sendMessage", {
+  async #sendHtml(
+    chatId: string,
+    html: string,
+    extra: Record<string, unknown> = {}
+  ): Promise<{ message_id?: number }> {
+    return await this.callApi<{ message_id?: number }>("sendMessage", {
       chat_id: chatId,
       text: html,
       parse_mode: "HTML",
@@ -974,7 +937,7 @@ export class TelegramSmsBot {
     });
   }
 
-  async #cmdHelp(chatId) {
+  async #cmdHelp(chatId: string): Promise<void> {
     const defCountry = getCountryByDialCode(this.defaultCountryCode);
     const defLabel = defCountry
       ? `${defCountry.flag} ${defCountry.nameZh} (${defCountry.code})`
@@ -1012,7 +975,7 @@ export class TelegramSmsBot {
     });
   }
 
-  async #cmdStatus(chatId) {
+  async #cmdStatus(chatId: string): Promise<void> {
     try {
       const s = await this.cpeClient.getStatusSummary();
       const lines = [
@@ -1025,9 +988,13 @@ export class TelegramSmsBot {
         );
       }
       if (s.signal) {
-        const sigParts = [];
-        if (s.signal.nrRsrp) sigParts.push(`5G RSRP ${s.signal.nrRsrp} / SINR ${s.signal.nrSinr || "-"}`);
-        if (s.signal.rsrp) sigParts.push(`4G RSRP ${s.signal.rsrp} / SINR ${s.signal.sinr || "-"}`);
+        const sigParts: string[] = [];
+        if (s.signal.nrRsrp) {
+          sigParts.push(`5G RSRP ${s.signal.nrRsrp} / SINR ${s.signal.nrSinr || "-"}`);
+        }
+        if (s.signal.rsrp) {
+          sigParts.push(`4G RSRP ${s.signal.rsrp} / SINR ${s.signal.sinr || "-"}`);
+        }
         if (sigParts.length > 0) {
           lines.push(`📶 <b>信号：</b>${escapeTelegramHtml(sigParts.join(" | "))}`);
         }
@@ -1040,7 +1007,7 @@ export class TelegramSmsBot {
       }
       if (this.archiveStore) {
         lines.push(
-          `💾 <b>本地历史归档：</b>已保存 <b>${this.archiveStore.messages.size}</b> 条短信 | 通讯录 <b>${this.contactStore?.contacts.length ?? 0}</b> 人`
+          `💾 <b>本地加密归档：</b>已保存 <b>${this.archiveStore.messages.size}</b> 条短信 | 通讯录 <b>${this.contactStore?.contacts.length ?? 0}</b> 人`
         );
       }
       await this.#sendHtml(chatId, lines.join("\n"), {
@@ -1055,11 +1022,12 @@ export class TelegramSmsBot {
         },
       });
     } catch (err) {
-      await this.#sendHtml(chatId, `❌ 获取状态失败：${escapeTelegramHtml(err.message)}`);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      await this.#sendHtml(chatId, `❌ 获取状态失败：${escapeTelegramHtml(errMsg)}`);
     }
   }
 
-  async #cmdInbox(chatId, page = 1) {
+  async #cmdInbox(chatId: string, page = 1): Promise<void> {
     try {
       const pageSize = 8;
       const res = await this.cpeClient.listContacts({ page, count: pageSize });
@@ -1073,11 +1041,15 @@ export class TelegramSmsBot {
       }
 
       const totalPages = Math.max(1, Math.ceil(res.total / pageSize));
-      const lines = [`📬 <b>最近短信会话（第 ${page}/${totalPages} 页，共 ${res.total} 个联系人）</b>`, ""];
+      const lines = [
+        `📬 <b>最近短信会话（第 ${page}/${totalPages} 页，共 ${res.total} 个联系人）</b>`,
+        "",
+      ];
 
-      /** @type {Array<Array<{ text: string, callback_data: string }>>} */
-      const keyboard = [[{ text: "✍️ 引导式发送新短信", callback_data: "wizstart:1" }]];
-      let currentRow = [];
+      const keyboard: Array<Array<{ text: string; callback_data: string }>> = [
+        [{ text: "✍️ 引导式发送新短信", callback_data: "wizstart:1" }],
+      ];
+      let currentRow: Array<{ text: string; callback_data: string }> = [];
 
       for (const c of res.contacts) {
         const badge = c.isUnread ? "🔴" : c.direction === "out" ? "📤" : "⚪";
@@ -1103,7 +1075,7 @@ export class TelegramSmsBot {
       }
       if (currentRow.length > 0) keyboard.push(currentRow);
 
-      const navRow = [];
+      const navRow: Array<{ text: string; callback_data: string }> = [];
       if (page > 1) navRow.push({ text: "⬅️ 上一页", callback_data: `inbox:${page - 1}` });
       if (page < totalPages) navRow.push({ text: "➡️ 下一页", callback_data: `inbox:${page + 1}` });
       if (navRow.length > 0) keyboard.push(navRow);
@@ -1112,11 +1084,12 @@ export class TelegramSmsBot {
         reply_markup: { inline_keyboard: keyboard },
       });
     } catch (err) {
-      await this.#sendHtml(chatId, `❌ 读取会话列表失败：${escapeTelegramHtml(err.message)}`);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      await this.#sendHtml(chatId, `❌ 读取会话列表失败：${escapeTelegramHtml(errMsg)}`);
     }
   }
 
-  async #cmdUnread(chatId) {
+  async #cmdUnread(chatId: string): Promise<void> {
     try {
       const res = await this.cpeClient.fetchRecentInboxMessages({ count: 10, unreadOnly: true });
       if (!res || res.messages.length === 0) {
@@ -1144,25 +1117,33 @@ export class TelegramSmsBot {
         },
       });
     } catch (err) {
-      await this.#sendHtml(chatId, `❌ 获取未读短信失败：${escapeTelegramHtml(err.message)}`);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      await this.#sendHtml(chatId, `❌ 获取未读短信失败：${escapeTelegramHtml(errMsg)}`);
     }
   }
 
-  async #cmdChat(chatId, phoneArg) {
+  async #cmdChat(chatId: string, phoneArg: string): Promise<void> {
     const phone = phoneArg.trim();
     if (!phone) {
-      await this.#sendHtml(chatId, `用法：<code>/chat 号码或发件人</code>（例如 <code>/chat +353831234567</code>）`);
+      await this.#sendHtml(
+        chatId,
+        `用法：<code>/chat 号码或发件人</code>（例如 <code>/chat +353831234567</code>）`
+      );
       return;
     }
 
     try {
       const res = await this.cpeClient.listPhoneMessages(phone, { page: 1, count: 12 });
       if (!res || res.messages.length === 0) {
-        await this.#sendHtml(chatId, `📭 未找到与 <code>${escapeTelegramHtml(phone)}</code> 的短信记录。`);
+        await this.#sendHtml(
+          chatId,
+          `📭 未找到与 <code>${escapeTelegramHtml(phone)}</code> 的短信记录。`
+        );
         return;
       }
 
-      const info = this.formatSenderSummary(phone, res.messages[res.messages.length - 1]?.content);
+      const lastContent = res.messages[res.messages.length - 1]?.content ?? "";
+      const info = this.formatSenderSummary(phone, lastContent);
       const lines = [`💬 <b>对话详情：${info.shortTitle}（共 ${res.total} 条）</b>`, ""];
       const recent = res.messages.slice(-10);
       const senderLabel = info.contact ? info.contact.name : phone;
@@ -1180,7 +1161,9 @@ export class TelegramSmsBot {
 
       const replyTarget = info.sender.e164 ?? phone;
       if (info.sender.dialable && isDialablePhone(replyTarget)) {
-        lines.push(`💡 <i>直接「回复」本条消息即可发送短信至 ${escapeTelegramHtml(replyTarget)}</i>`);
+        lines.push(
+          `💡 <i>直接「回复」本条消息即可发送短信至 ${escapeTelegramHtml(replyTarget)}</i>`
+        );
       }
 
       const sent = await this.#sendHtml(chatId, lines.join("\n").slice(0, 4000));
@@ -1188,13 +1171,14 @@ export class TelegramSmsBot {
         this.stateStore.bindReplyTarget(chatId, sent.message_id, replyTarget);
       }
     } catch (err) {
-      await this.#sendHtml(chatId, `❌ 读取对话失败：${escapeTelegramHtml(err.message)}`);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      await this.#sendHtml(chatId, `❌ 读取对话失败：${escapeTelegramHtml(errMsg)}`);
     }
   }
 
-  async #cmdSend(chatId, rest) {
+  async #cmdSend(chatId: string, rest: string): Promise<void> {
     const match = rest.match(/^(\S+)\s+([\s\S]+)$/);
-    if (!match) {
+    if (!match?.[1] || !match[2]) {
       await this.startSendWizard(chatId);
       return;
     }
@@ -1206,7 +1190,7 @@ export class TelegramSmsBot {
     await this.#executeSendSms(chatId, resolved.phone, match[2]);
   }
 
-  async #cmdContacts(chatId, query) {
+  async #cmdContacts(chatId: string, query: string): Promise<void> {
     if (!this.contactStore) {
       await this.#sendHtml(chatId, `通讯录模块未启用。`);
       return;
@@ -1226,7 +1210,10 @@ export class TelegramSmsBot {
       return;
     }
 
-    const lines = [`📇 <b>联系人列表（显示 ${list.length} / 共 ${this.contactStore.contacts.length} 位）</b>`, ""];
+    const lines = [
+      `📇 <b>联系人列表（显示 ${list.length} / 共 ${this.contactStore.contacts.length} 位）</b>`,
+      "",
+    ];
     for (const c of list) {
       lines.push(
         `• <b>${escapeTelegramHtml(c.name)}</b>：<code>${escapeTelegramHtml(c.phones.join(", "))}</code>`
@@ -1235,10 +1222,10 @@ export class TelegramSmsBot {
     await this.#sendHtml(chatId, lines.join("\n"));
   }
 
-  async #cmdUpsertContact(chatId, rest) {
+  async #cmdUpsertContact(chatId: string, rest: string): Promise<void> {
     if (!this.contactStore) return;
     const match = rest.match(/^(\S+)\s+([\s\S]+)$/);
-    if (!match) {
+    if (!match?.[1] || !match[2]) {
       await this.#sendHtml(
         chatId,
         `用法：<code>/contact 号码 备注姓名</code>\n示例：<code>/contact 0831234567 房东John</code>`
@@ -1253,20 +1240,20 @@ export class TelegramSmsBot {
       this.archiveStore?.emit("contacts:updated", { total: this.contactStore.contacts.length });
       await this.#sendHtml(
         chatId,
-        `✅ 已保存联系人：<b>${escapeTelegramHtml(saved.name)}</b> (<code>${escapeTelegramHtml(saved.phones[0])}</code>)`
+        `✅ 已保存联系人：<b>${escapeTelegramHtml(saved.name)}</b> (<code>${escapeTelegramHtml(saved.phones[0] ?? "")}</code>)`
       );
     } catch (err) {
-      await this.#sendHtml(chatId, `❌ 保存失败：${escapeTelegramHtml(err.message)}`);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      await this.#sendHtml(chatId, `❌ 保存失败：${escapeTelegramHtml(errMsg)}`);
     }
   }
 
-  /**
-   * @param {string} chatId
-   * @param {string} phone
-   * @param {string} content
-   * @param {number} [existingMessageId]
-   */
-  async #executeSendSms(chatId, phone, content, existingMessageId) {
+  async #executeSendSms(
+    chatId: string,
+    phone: string,
+    content: string,
+    existingMessageId?: number
+  ): Promise<void> {
     const info = this.formatSenderSummary(phone);
     let msgId = existingMessageId;
 
@@ -1314,7 +1301,9 @@ export class TelegramSmsBot {
         : [
             `❌ <b>短信发送失败</b>`,
             `📞 <b>收件人：</b>${info.shortTitle}`,
-            result.failCode ? `⚠️ <b>错误码：</b><code>${escapeTelegramHtml(result.failCode)}</code>` : "",
+            result.failCode
+              ? `⚠️ <b>错误码：</b><code>${escapeTelegramHtml(result.failCode)}</code>`
+              : "",
           ]
             .filter(Boolean)
             .join("\n");
@@ -1331,7 +1320,8 @@ export class TelegramSmsBot {
         await this.#sendHtml(chatId, resultText);
       }
     } catch (err) {
-      const errHtml = `❌ <b>发送失败：</b>${escapeTelegramHtml(err.message)}`;
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const errHtml = `❌ <b>发送失败：</b>${escapeTelegramHtml(errMsg)}`;
       if (msgId) {
         await this.callApi("editMessageText", {
           chat_id: chatId,
@@ -1345,7 +1335,7 @@ export class TelegramSmsBot {
     }
   }
 
-  async #cmdRead(chatId, arg) {
+  async #cmdRead(chatId: string, arg: string): Promise<void> {
     if (!arg) {
       await this.#sendHtml(chatId, `用法：<code>/read 短信ID</code> 或 <code>/read all</code>`);
       return;
@@ -1368,13 +1358,17 @@ export class TelegramSmsBot {
         await this.#sendHtml(chatId, `✅ 已标记 ${r.count} 条短信为已读。`);
       }
     } catch (err) {
-      await this.#sendHtml(chatId, `❌ 操作失败：${escapeTelegramHtml(err.message)}`);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      await this.#sendHtml(chatId, `❌ 操作失败：${escapeTelegramHtml(errMsg)}`);
     }
   }
 
-  async #cmdDelete(chatId, arg) {
+  async #cmdDelete(chatId: string, arg: string): Promise<void> {
     if (!arg) {
-      await this.#sendHtml(chatId, `用法：<code>/delete 短信ID</code>（例如 <code>/delete 40182</code>）`);
+      await this.#sendHtml(
+        chatId,
+        `用法：<code>/delete 短信ID</code>（例如 <code>/delete 40182</code>）`
+      );
       return;
     }
     try {
@@ -1383,25 +1377,27 @@ export class TelegramSmsBot {
       this.archiveStore?.markDeletedByCpeIndices(ids);
       await this.#sendHtml(chatId, `🗑 已删除 ${r.count} 条短信。`);
     } catch (err) {
-      await this.#sendHtml(chatId, `❌ 删除失败：${escapeTelegramHtml(err.message)}`);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      await this.#sendHtml(chatId, `❌ 删除失败：${escapeTelegramHtml(errMsg)}`);
     }
   }
 
-  async #cmdSync(chatId) {
+  async #cmdSync(chatId: string): Promise<void> {
     try {
       if (this.poller) {
         const dump = await this.poller.syncFullHistory({ respectBrowserSession: false });
         await this.#sendHtml(
           chatId,
           dump
-            ? `🔄 全量历史同步完成：CPE 共 ${dump.messages.length} 条短信（未读 ${dump.localUnread} 条），本地历史库共归档 ${this.archiveStore?.messages.size ?? dump.messages.length} 条。`
+            ? `🔄 全量历史同步完成：CPE 共 ${dump.messages.length} 条短信（未读 ${dump.localUnread} 条），本地加密归档库共 ${this.archiveStore?.messages.size ?? dump.messages.length} 条。`
             : `🔄 同步已执行。`
         );
       } else {
         await this.#cmdUnread(chatId);
       }
     } catch (err) {
-      await this.#sendHtml(chatId, `❌ 同步失败：${escapeTelegramHtml(err.message)}`);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      await this.#sendHtml(chatId, `❌ 同步失败：${escapeTelegramHtml(errMsg)}`);
     }
   }
 }

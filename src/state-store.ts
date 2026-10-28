@@ -1,41 +1,46 @@
-import fs from "node:fs";
-import path from "node:path";
+import { StorageCipher } from "./encrypted-file.ts";
 
 const MAX_NOTIFIED_INDICES = 2000;
 const MAX_REPLY_MAPPINGS = 500;
 
+export interface StateStoreData {
+  seeded: boolean;
+  lastUnreadCount: number | null;
+  storageWarned: boolean;
+  authorizedChatIds: string[];
+  notifiedIndices: number[];
+  replyPhoneMap: Record<string, string>;
+}
+
 /**
  * Persistent state store for notified SMS cursor, paired Telegram chats,
- * and Telegram `message_id -> phone` reply routing.
+ * and Telegram `message_id -> phone` reply routing, encrypted at rest via `StorageCipher`.
  */
 export class StateStore {
-  /**
-   * @param {string} filePath
-   */
-  constructor(filePath) {
+  readonly filePath: string;
+  readonly cipher: StorageCipher;
+  data: StateStoreData;
+  #notifiedSet: Set<number>;
+
+  constructor(filePath: string, cipher: StorageCipher = StorageCipher.fromSecret()) {
     this.filePath = filePath;
+    this.cipher = cipher;
     this.data = {
       seeded: false,
       lastUnreadCount: null,
       storageWarned: false,
-      /** @type {string[]} */
       authorizedChatIds: [],
-      /** @type {number[]} */
       notifiedIndices: [],
-      /** @type {Record<string, string>} key = `${chatId}:${messageId}`, value = phone */
       replyPhoneMap: {},
     };
     this.#notifiedSet = new Set();
     this.load();
   }
 
-  /** @type {Set<number>} */
-  #notifiedSet;
-
-  load() {
-    if (!fs.existsSync(this.filePath)) return;
+  load(): void {
     try {
-      const raw = JSON.parse(fs.readFileSync(this.filePath, "utf8"));
+      const raw = this.cipher.readJsonFile<Partial<StateStoreData>>(this.filePath);
+      if (!raw) return;
       this.data.seeded = Boolean(raw.seeded);
       this.data.lastUnreadCount =
         typeof raw.lastUnreadCount === "number" ? raw.lastUnreadCount : null;
@@ -47,36 +52,25 @@ export class StateStore {
         ? raw.notifiedIndices.map(Number).filter((n) => Number.isFinite(n) && n > 0)
         : [];
       this.data.replyPhoneMap =
-        raw.replyPhoneMap && typeof raw.replyPhoneMap === "object" ? raw.replyPhoneMap : {};
+        raw.replyPhoneMap && typeof raw.replyPhoneMap === "object"
+          ? { ...raw.replyPhoneMap }
+          : {};
       this.#notifiedSet = new Set(this.data.notifiedIndices);
     } catch (err) {
-      console.warn(`[StateStore] Failed to parse ${this.filePath}, starting fresh:`, err.message);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[StateStore] Failed to load ${this.filePath}, starting fresh: ${msg}`);
     }
   }
 
-  save() {
-    const dir = path.dirname(this.filePath);
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const tmpFile = `${this.filePath}.${process.pid}.tmp`;
-    const payload = JSON.stringify(this.data, null, 2);
-    fs.writeFileSync(tmpFile, payload, { encoding: "utf8", mode: 0o600 });
-    fs.renameSync(tmpFile, this.filePath);
+  save(): void {
+    this.cipher.writeJsonFile(this.filePath, this.data);
   }
 
-  /**
-   * @param {number} index
-   * @returns {boolean}
-   */
-  isNotified(index) {
+  isNotified(index: number): boolean {
     return this.#notifiedSet.has(index);
   }
 
-  /**
-   * Record SMS indices as notified and persist atomically.
-   *
-   * @param {number[]} indices
-   */
-  markNotified(indices) {
+  markNotified(indices: number[]): void {
     let changed = false;
     for (const idx of indices) {
       if (!idx || this.#notifiedSet.has(idx)) continue;
@@ -93,13 +87,7 @@ export class StateStore {
     if (changed) this.save();
   }
 
-  /**
-   * Mark initial seeding complete.
-   *
-   * @param {number[]} initialIndices
-   * @param {number} unreadCount
-   */
-  completeSeed(initialIndices, unreadCount) {
+  completeSeed(initialIndices: number[], unreadCount: number): void {
     for (const idx of initialIndices) {
       if (idx && !this.#notifiedSet.has(idx)) {
         this.#notifiedSet.add(idx);
@@ -115,49 +103,30 @@ export class StateStore {
     this.save();
   }
 
-  /**
-   * @param {number} count
-   */
-  setLastUnreadCount(count) {
+  setLastUnreadCount(count: number): void {
     if (this.data.lastUnreadCount !== count) {
       this.data.lastUnreadCount = count;
       this.save();
     }
   }
 
-  /**
-   * @param {boolean} warned
-   */
-  setStorageWarned(warned) {
+  setStorageWarned(warned: boolean): void {
     if (this.data.storageWarned !== warned) {
       this.data.storageWarned = warned;
       this.save();
     }
   }
 
-  /**
-   * @param {string | number} chatId
-   * @param {string[]} envAllowedIds
-   */
-  isChatAuthorized(chatId, envAllowedIds = []) {
+  isChatAuthorized(chatId: string | number, envAllowedIds: string[] = []): boolean {
     const id = String(chatId);
     return envAllowedIds.includes(id) || this.data.authorizedChatIds.includes(id);
   }
 
-  /**
-   * @param {string[]} envAllowedIds
-   * @returns {string[]}
-   */
-  getAllAuthorizedChats(envAllowedIds = []) {
+  getAllAuthorizedChats(envAllowedIds: string[] = []): string[] {
     return [...new Set([...envAllowedIds.map(String), ...this.data.authorizedChatIds])];
   }
 
-  /**
-   * Authorize and persist a Telegram chat ID.
-   *
-   * @param {string | number} chatId
-   */
-  authorizeChat(chatId) {
+  authorizeChat(chatId: string | number): void {
     const id = String(chatId);
     if (!this.data.authorizedChatIds.includes(id)) {
       this.data.authorizedChatIds.push(id);
@@ -165,14 +134,7 @@ export class StateStore {
     }
   }
 
-  /**
-   * Bind a sent Telegram message to an SMS phone number so native Reply-to-Message works.
-   *
-   * @param {string | number} chatId
-   * @param {number} messageId
-   * @param {string} phone
-   */
-  bindReplyTarget(chatId, messageId, phone) {
+  bindReplyTarget(chatId: string | number, messageId: number, phone: string): void {
     if (!phone) return;
     const key = `${chatId}:${messageId}`;
     this.data.replyPhoneMap[key] = phone;
@@ -185,14 +147,7 @@ export class StateStore {
     this.save();
   }
 
-  /**
-   * Look up which SMS phone number a Telegram message refers to.
-   *
-   * @param {string | number} chatId
-   * @param {number} messageId
-   * @returns {string | null}
-   */
-  getReplyTarget(chatId, messageId) {
+  getReplyTarget(chatId: string | number, messageId: number): string | null {
     return this.data.replyPhoneMap[`${chatId}:${messageId}`] ?? null;
   }
 }

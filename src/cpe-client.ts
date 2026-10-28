@@ -8,7 +8,8 @@ import {
   huaweiXssEncode,
   stripInvalidControlChars,
   verifyPubkeySignature,
-} from "./crypto.js";
+} from "./crypto.ts";
+import type { CpeFullDump, CpeStatusSummary, SendSmsResult, SmsMessage } from "./types.ts";
 import {
   buildXmlRequest,
   escapeXmlBasic,
@@ -17,12 +18,9 @@ import {
   getXmlTag,
   getXmlTextPreserve,
   parseXmlError,
-} from "./xml.js";
+} from "./xml.ts";
 
-/**
- * Known Huawei HiLink error codes for clear diagnostics.
- */
-export const CPE_ERROR_DESCRIPTIONS = {
+export const CPE_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "100002": "系统不支持该接口 (No support)",
   "100003": "权限不足或未登录 (Unauthorized)",
   "100004": "系统繁忙 (System busy)",
@@ -45,12 +43,15 @@ export const CPE_ERROR_DESCRIPTIONS = {
 };
 
 export class CpeApiError extends Error {
-  /**
-   * @param {string} code
-   * @param {string} [detail]
-   * @param {{ remainCount?: number | null, waitTime?: number | null }} [meta]
-   */
-  constructor(code, detail = "", meta = {}) {
+  readonly code: string;
+  readonly remainCount: number | null;
+  readonly waitTime: number | null;
+
+  constructor(
+    code: string,
+    detail = "",
+    meta: { remainCount?: number | null; waitTime?: number | null } = {}
+  ) {
     const desc = CPE_ERROR_DESCRIPTIONS[code] ?? "CPE 接口错误";
     const suffix = detail ? `: ${detail}` : "";
     super(`[CPE ${code}] ${desc}${suffix}`);
@@ -60,60 +61,33 @@ export class CpeApiError extends Error {
     this.waitTime = meta.waitTime ?? null;
   }
 
-  get isAuthWrongPassword() {
+  get isAuthWrongPassword(): boolean {
     return this.code === "108006" || this.code === "108002" || this.code === "108001";
   }
 
-  get isLocked() {
+  get isLocked(): boolean {
     return this.code === "108007";
   }
 
-  get isSessionOccupied() {
+  get isSessionOccupied(): boolean {
     return this.code === "108003" || this.code === "108005" || this.code === "108009";
   }
 }
 
-/**
- * Check whether a recipient string is a dialable phone number (digits with optional leading `+`),
- * distinguishing it from alphanumeric carrier sender IDs like `Apple` or `Three`.
- *
- * @param {string} phone
- * @returns {boolean}
- */
-export function isDialablePhone(phone) {
+export function isDialablePhone(phone: string): boolean {
   if (!phone) return false;
   const cleaned = phone.trim().replace(/[\s-]/g, "");
   return /^\+?[0-9]{3,20}$/.test(cleaned);
 }
 
-/**
- * Normalize dialable phone numbers (strip spaces/hyphens).
- *
- * @param {string} phone
- * @returns {string}
- */
-export function normalizePhone(phone) {
+export function normalizePhone(phone: string): string {
   return (phone || "").trim().replace(/[\s-]/g, "");
 }
 
-/**
- * Parse a `<message>` / `<Message>` XML block into a unified SMS object.
- *
- * @param {string} block
- * @param {"0" | "1" | null} [defaultCurbox]
- * @returns {{
- *   index: number,
- *   phone: string,
- *   content: string,
- *   date: string,
- *   smstat: string,
- *   smstype: string,
- *   curbox: string,
- *   isUnread: boolean,
- *   direction: "in" | "out"
- * }}
- */
-export function parseSmsMessageBlock(block, defaultCurbox = null) {
+export function parseSmsMessageBlock(
+  block: string,
+  defaultCurbox: "0" | "1" | null = null
+): SmsMessage {
   const indexStr = getXmlTag(block, "index") ?? "0";
   const phone = getXmlTag(block, "phone") ?? "";
   const content = getXmlTextPreserve(block, "content");
@@ -138,47 +112,46 @@ export function parseSmsMessageBlock(block, defaultCurbox = null) {
   };
 }
 
-/**
- * Internal ephemeral session bound to a single `login -> action -> logout` lifecycle.
- */
 class EphemeralCpeSession {
-  /**
-   * @param {{
-   *   baseUrl: string,
-   *   username: string,
-   *   password: string,
-   *   timeoutMs: number,
-   *   fetchImpl: typeof fetch
-   * }} opts
-   */
-  constructor(opts) {
+  readonly baseUrl: string;
+  readonly username: string;
+  readonly password: string;
+  readonly timeoutMs: number;
+  readonly fetchImpl: typeof fetch;
+  cookies: Map<string, string>;
+  tokens: string[];
+  ecc: { clientPubHex: string; shareKeyHex: string } | null;
+  loggedIn: boolean;
+
+  constructor(opts: {
+    baseUrl: string;
+    username: string;
+    password: string;
+    timeoutMs: number;
+    fetchImpl: typeof fetch;
+  }) {
     this.baseUrl = opts.baseUrl;
     this.username = opts.username;
     this.password = opts.password;
     this.timeoutMs = opts.timeoutMs;
     this.fetchImpl = opts.fetchImpl;
-    /** @type {Map<string, string>} */
     this.cookies = new Map();
-    /** @type {string[]} */
     this.tokens = [];
-    /** @type {{ clientPubHex: string, shareKeyHex: string } | null} */
     this.ecc = null;
     this.loggedIn = false;
   }
 
-  /**
-   * @param {Headers} headers
-   */
-  #updateCookies(headers) {
-    const rawList =
+  #updateCookies(headers: Headers): void {
+    const setCookieVal = headers.get("set-cookie");
+    const rawList: Array<string | null> =
       typeof headers.getSetCookie === "function"
         ? headers.getSetCookie()
-        : headers.get("set-cookie")
-          ? [headers.get("set-cookie")]
+        : setCookieVal
+          ? [setCookieVal]
           : [];
     for (const raw of rawList) {
       if (!raw) continue;
-      const pair = raw.split(";")[0];
+      const pair = raw.split(";")[0] ?? "";
       const eq = pair.indexOf("=");
       if (eq > 0) {
         this.cookies.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
@@ -186,16 +159,12 @@ class EphemeralCpeSession {
     }
   }
 
-  #cookieHeader() {
+  #cookieHeader(): string {
     if (this.cookies.size === 0) return "";
     return [...this.cookies.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
   }
 
-  /**
-   * @param {Headers} headers
-   * @param {boolean} clearFirst
-   */
-  #captureTokens(headers, clearFirst = false) {
+  #captureTokens(headers: Headers, clearFirst = false): void {
     if (clearFirst) {
       this.tokens = [];
     }
@@ -210,18 +179,9 @@ class EphemeralCpeSession {
     }
   }
 
-  /**
-   * Perform an HTTP GET inside this session.
-   *
-   * @param {string} apiPath
-   * @param {Record<string, string>} [extraHeaders]
-   * @returns {Promise<string>}
-   */
-  async get(apiPath, extraHeaders = {}) {
-    /** @type {Record<string, string>} */
-    const headers = {
+  async get(apiPath: string, extraHeaders: Record<string, string> = {}): Promise<string> {
+    const headers: Record<string, string> = {
       "X-Requested-With": "XMLHttpRequest",
-      // Firmware literally checks `_ResponseSource: Broswer` (typo in Huawei firmware)
       _ResponseSource: "Broswer",
       Accept: "*/*",
       ...extraHeaders,
@@ -238,12 +198,12 @@ class EphemeralCpeSession {
     const text = await res.text();
     const err = parseXmlError(text);
     if (err) {
-      throw new CpeApiError(err.code, `${apiPath}`, err);
+      throw new CpeApiError(err.code, apiPath, err);
     }
     return text;
   }
 
-  async #consumeToken() {
+  async #consumeToken(): Promise<string> {
     if (this.tokens.length === 0) {
       const xml = await this.get("/api/webserver/token");
       const fullToken = getXmlTag(xml, "token");
@@ -252,21 +212,16 @@ class EphemeralCpeSession {
       }
       this.tokens.push(fullToken.slice(32));
     }
-    return /** @type {string} */ (this.tokens.shift());
+    return this.tokens.shift()!;
   }
 
-  /**
-   * Perform an HTTP POST with automatic CSRF token consumption and rotation.
-   *
-   * @param {string} apiPath
-   * @param {string} body
-   * @param {{ clearTokensOnResponse?: boolean }} [opts]
-   * @returns {Promise<string>}
-   */
-  async postRaw(apiPath, body, opts = {}) {
+  async postRaw(
+    apiPath: string,
+    body: string,
+    opts: { clearTokensOnResponse?: boolean } = {}
+  ): Promise<string> {
     const token = await this.#consumeToken();
-    /** @type {Record<string, string>} */
-    const headers = {
+    const headers: Record<string, string> = {
       "X-Requested-With": "XMLHttpRequest",
       _ResponseSource: "Broswer",
       "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
@@ -287,23 +242,16 @@ class EphemeralCpeSession {
     const text = await res.text();
     const err = parseXmlError(text);
     if (err) {
-      throw new CpeApiError(err.code, `${apiPath}`, err);
+      throw new CpeApiError(err.code, apiPath, err);
     }
     return text;
   }
 
-  /**
-   * Perform an encrypted POST using H168-383 `SoftwareCapability[208]` ECC + AES-256-GCM:
-   * - `encType = 1`: plain XML request, AES-GCM encrypted response
-   * - `encType = 2`: AES-GCM encrypted request, plain XML response
-   * - `encType = 3`: AES-GCM encrypted request AND AES-GCM encrypted response
-   *
-   * @param {string} apiPath
-   * @param {Record<string, unknown>} requestObj
-   * @param {1 | 2 | 3} encType
-   * @returns {Promise<string>}
-   */
-  async postEncrypted(apiPath, requestObj, encType) {
+  async postEncrypted(
+    apiPath: string,
+    requestObj: Record<string, unknown>,
+    encType: 1 | 2 | 3
+  ): Promise<string> {
     if (!this.ecc) {
       const pubXml = await this.get("/api/webserver/publickey");
       const serverPub = getXmlTag(pubXml, "ecc_server_pubkey");
@@ -314,8 +262,7 @@ class EphemeralCpeSession {
     }
 
     const plainXml = buildXmlRequest(requestObj);
-    const body =
-      encType === 1 ? plainXml : aesGcmEncrypt(plainXml, this.ecc.shareKeyHex);
+    const body = encType === 1 ? plainXml : aesGcmEncrypt(plainXml, this.ecc.shareKeyHex);
     const sep = apiPath.includes("?") ? "&" : "?";
     const urlWithQuery = `${apiPath}${sep}ecc-client-pubkey=${this.ecc.clientPubHex}&enc-type=${encType}`;
 
@@ -332,15 +279,11 @@ class EphemeralCpeSession {
     return decryptedXml;
   }
 
-  /**
-   * Authenticate with H168-383 via SCRAM-SHA256 and derive the Curve25519 session key.
-   */
-  async login() {
+  async login(): Promise<void> {
     if (!this.password) {
       throw new Error("CPE_PASSWORD 未配置，请在 .env 中设置 CPE 管理密码");
     }
 
-    // Initialize SessionID cookie just like official WebUI (`main_login_store.js` `Q()`)
     await this.get("/api/monitoring/status", { "Update-Cookie": "UpdateCookie" });
 
     const firstNonce = crypto.randomBytes(32).toString("hex");
@@ -390,10 +333,7 @@ class EphemeralCpeSession {
     }
   }
 
-  /**
-   * Release the CPE's single admin session cleanly so WebUI browser access is never blocked.
-   */
-  async logout() {
+  async logout(): Promise<void> {
     if (!this.loggedIn) return;
     try {
       await this.postRaw("/api/user/logout", buildXmlRequest({ Logout: 1 }));
@@ -405,39 +345,35 @@ class EphemeralCpeSession {
   }
 }
 
+export interface HuaweiCpeClientOptions {
+  cpeUrl: string;
+  cpeUsername?: string;
+  cpePassword: string;
+  requestTimeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}
+
 /**
  * High-level Huawei 5G CPE Ultra 6 (H168-383) client with serialized short-lived sessions.
  */
 export class HuaweiCpeClient {
-  /**
-   * @param {{
-   *   cpeUrl: string,
-   *   cpeUsername?: string,
-   *   cpePassword: string,
-   *   requestTimeoutMs?: number,
-   *   fetchImpl?: typeof fetch
-   * }} config
-   */
-  constructor(config) {
+  readonly baseUrl: string;
+  readonly username: string;
+  readonly password: string;
+  readonly timeoutMs: number;
+  readonly fetchImpl: typeof fetch;
+  #mutex: Promise<unknown>;
+
+  constructor(config: HuaweiCpeClientOptions) {
     this.baseUrl = config.cpeUrl.replace(/\/+$/, "");
     this.username = config.cpeUsername ?? "admin";
     this.password = config.cpePassword;
     this.timeoutMs = config.requestTimeoutMs ?? 20000;
     this.fetchImpl = config.fetchImpl ?? globalThis.fetch;
-    /** @type {Promise<unknown>} */
     this.#mutex = Promise.resolve();
   }
 
-  /** @type {Promise<unknown>} */
-  #mutex;
-
-  /**
-   * Perform an unauthenticated GET request (zero session footprint).
-   *
-   * @param {string} apiPath
-   * @returns {Promise<string>}
-   */
-  async getPublic(apiPath) {
+  async getPublic(apiPath: string): Promise<string> {
     const res = await this.fetchImpl(`${this.baseUrl}${apiPath}`, {
       method: "GET",
       headers: {
@@ -455,11 +391,11 @@ export class HuaweiCpeClient {
     return text;
   }
 
-  /**
-   * Unauthenticated notification check (`/api/monitoring/check-notifications`).
-   * Works without logging in and never disturbs an open WebUI session in the browser.
-   */
-  async checkNotifications() {
+  async checkNotifications(): Promise<{
+    unreadMessages: number;
+    smsStorageFull: boolean;
+    onlineUpdateStatus: string;
+  }> {
     const xml = await this.getPublic("/api/monitoring/check-notifications");
     return {
       unreadMessages: Number.parseInt(getXmlTag(xml, "UnreadMessage") ?? "0", 10) || 0,
@@ -468,13 +404,15 @@ export class HuaweiCpeClient {
     };
   }
 
-  /**
-   * Unauthenticated login state inspection (`/api/user/state-login`).
-   */
-  async getLoginState() {
+  async getLoginState(): Promise<{
+    state: string;
+    isLoggedInElsewhere: boolean;
+    isLocked: boolean;
+    remainWaitTime: number;
+    passwordType: string;
+  }> {
     const xml = await this.getPublic("/api/user/state-login");
     return {
-      // "0" = someone is currently logged in, "-1" = idle/logged out
       state: getXmlTag(xml, "State") ?? "-1",
       isLoggedInElsewhere: (getXmlTag(xml, "State") ?? "-1") === "0",
       isLocked: (getXmlTag(xml, "lockstatus") ?? "0") === "1",
@@ -483,10 +421,11 @@ export class HuaweiCpeClient {
     };
   }
 
-  /**
-   * Unauthenticated basic device identity (`/api/device/basic_information`).
-   */
-  async getBasicDeviceInfo() {
+  async getBasicDeviceInfo(): Promise<{
+    deviceName: string;
+    marketingName: string;
+    classify: string;
+  }> {
     const xml = await this.getPublic("/api/device/basic_information");
     return {
       deviceName: getXmlTag(xml, "devicename") ?? "Huawei CPE",
@@ -495,16 +434,11 @@ export class HuaweiCpeClient {
     };
   }
 
-  /**
-   * Run an authenticated callback inside a mutex-serialized `login -> fn -> logout` transaction.
-   *
-   * @template T
-   * @param {(session: EphemeralCpeSession) => Promise<T>} fn
-   * @param {{ respectBrowserSession?: boolean, retriesOnOccupied?: number }} [options]
-   * @returns {Promise<T | null>}
-   */
-  async withSession(fn, options = {}) {
-    const run = async () => {
+  async withSession<T>(
+    fn: (session: EphemeralCpeSession) => Promise<T>,
+    options: { respectBrowserSession?: boolean; retriesOnOccupied?: number } = {}
+  ): Promise<T | null> {
+    const run = async (): Promise<T | null> => {
       const maxAttempts = (options.retriesOnOccupied ?? 2) + 1;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         const loginState = await this.getLoginState();
@@ -529,7 +463,6 @@ export class HuaweiCpeClient {
           await session.login();
           return await fn(session);
         } catch (err) {
-          // NEVER retry wrong-password errors so we never trigger CPE lockout!
           if (err instanceof CpeApiError && (err.isAuthWrongPassword || err.isLocked)) {
             throw err;
           }
@@ -546,7 +479,6 @@ export class HuaweiCpeClient {
     };
 
     const next = this.#mutex.then(run, run);
-    // Keep mutex chain alive regardless of failure
     this.#mutex = next.then(
       () => undefined,
       () => undefined
@@ -554,10 +486,7 @@ export class HuaweiCpeClient {
     return next;
   }
 
-  /**
-   * Fetch comprehensive CPE status, signal metrics, and SMS storage counts.
-   */
-  async getStatusSummary() {
+  async getStatusSummary(): Promise<CpeStatusSummary> {
     const [basic, notif] = await Promise.all([
       this.getBasicDeviceInfo(),
       this.checkNotifications(),
@@ -610,12 +539,12 @@ export class HuaweiCpeClient {
     };
   }
 
-  /**
-   * List SMS contact conversation threads via encrypted `/api/sms/sms-list-contact` (`enc-type=1`).
-   *
-   * @param {{ page?: number, count?: number }} [opts]
-   */
-  async listContacts(opts = {}) {
+  async listContacts(opts: { page?: number; count?: number } = {}): Promise<{
+    total: number;
+    page: number;
+    count: number;
+    contacts: SmsMessage[];
+  } | null> {
     const page = Math.max(1, opts.page ?? 1);
     const count = Math.min(50, Math.max(1, opts.count ?? 15));
 
@@ -631,19 +560,21 @@ export class HuaweiCpeClient {
         { pageindex: page, readcount: count },
         1
       );
-      const contacts = getXmlBlocks(decXml, "message").map(parseSmsMessageBlock);
+      const contacts = getXmlBlocks(decXml, "message").map((b) => parseSmsMessageBlock(b));
       return { total, page, count, contacts };
     });
   }
 
-  /**
-   * List SMS messages in a conversation with a specific phone/sender via encrypted
-   * `/api/sms/sms-list-phone` (`enc-type=3`).
-   *
-   * @param {string} phone
-   * @param {{ page?: number, count?: number }} [opts]
-   */
-  async listPhoneMessages(phone, opts = {}) {
+  async listPhoneMessages(
+    phone: string,
+    opts: { page?: number; count?: number } = {}
+  ): Promise<{
+    phone: string;
+    total: number;
+    page: number;
+    count: number;
+    messages: SmsMessage[];
+  } | null> {
     const page = Math.max(1, opts.page ?? 1);
     const count = Math.min(50, Math.max(1, opts.count ?? 20));
     const targetPhone = phone.trim();
@@ -665,21 +596,21 @@ export class HuaweiCpeClient {
         3
       );
       const messages = getXmlBlocks(decXml, "message")
-        .map(parseSmsMessageBlock)
+        .map((b) => parseSmsMessageBlock(b))
         .sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : a.index - b.index));
 
       return { phone: targetPhone, total, page, count, messages };
     });
   }
 
-  /**
-   * Fetch recent individual inbox messages (newest first) for accurate notification diffing
-   * and `/unread` listing. Uses `/api/sms/sms-list` (`BoxType=1`) and automatically falls back
-   * to encrypted `sms-list-contact` + `sms-list-phone` if needed.
-   *
-   * @param {{ count?: number, unreadOnly?: boolean, respectBrowserSession?: boolean }} [opts]
-   */
-  async fetchRecentInboxMessages(opts = {}) {
+  async fetchRecentInboxMessages(
+    opts: { count?: number; unreadOnly?: boolean; respectBrowserSession?: boolean } = {}
+  ): Promise<{
+    localUnread: number;
+    localInbox: number;
+    localMax: number;
+    messages: SmsMessage[];
+  } | null> {
     const readCount = Math.min(50, Math.max(1, opts.count ?? 20));
     const unreadPreferred = opts.unreadOnly ? 1 : 0;
 
@@ -708,7 +639,6 @@ export class HuaweiCpeClient {
           }
           return { localUnread, localInbox, localMax, messages };
         } catch {
-          // Fallback to encrypted session-SMS endpoints if a firmware revision removes /api/sms/sms-list
           const decXml = await session.postEncrypted(
             "/api/sms/sms-list-contact",
             { pageindex: 1, readcount: readCount },
@@ -727,13 +657,9 @@ export class HuaweiCpeClient {
     );
   }
 
-  /**
-   * Paginate and fetch ALL historical SMS messages (both LocalInbox and LocalOutbox)
-   * inside a single ephemeral session so the Web UI can load 100% of device history.
-   *
-   * @param {{ respectBrowserSession?: boolean }} [opts]
-   */
-  async fetchAllMessages(opts = {}) {
+  async fetchAllMessages(
+    opts: { respectBrowserSession?: boolean } = {}
+  ): Promise<CpeFullDump | null> {
     return await this.withSession(
       async (session) => {
         const smsCountXml = await session.get("/api/sms/sms-count");
@@ -742,8 +668,7 @@ export class HuaweiCpeClient {
         const localOutbox = Number.parseInt(getXmlTag(smsCountXml, "LocalOutbox") ?? "0", 10) || 0;
         const localMax = Number.parseInt(getXmlTag(smsCountXml, "LocalMax") ?? "500", 10) || 500;
 
-        /** @type {Array<ReturnType<typeof parseSmsMessageBlock>>} */
-        const all = [];
+        const all: SmsMessage[] = [];
         const pageSize = 50;
 
         try {
@@ -783,12 +708,11 @@ export class HuaweiCpeClient {
             if (items.length < pageSize) break;
           }
         } catch {
-          // Encrypted session-SMS pagination fallback (`sms-list-contact` + `sms-list-phone`)
           const countContactXml = await session.get("/api/sms/sms-count-contact");
           const totalContacts =
             Number.parseInt(getXmlTag(countContactXml, "count") ?? "0", 10) || 0;
           const contactPages = Math.ceil(totalContacts / 20);
-          const phones = new Set();
+          const phones = new Set<string>();
 
           for (let p = 1; p <= contactPages; p++) {
             const decContacts = await session.postEncrypted(
@@ -833,15 +757,11 @@ export class HuaweiCpeClient {
     );
   }
 
-  /**
-   * Send an SMS via H168-383 encrypted `/api/sms/send-sms` (`enc-type=2`) and poll
-   * encrypted `/api/sms/send-status` (`enc-type=1`) until carrier submission finishes.
-   *
-   * @param {string | string[]} phones
-   * @param {string} content
-   * @param {{ pollTimeoutMs?: number, pollIntervalMs?: number }} [opts]
-   */
-  async sendSms(phones, content, opts = {}) {
+  async sendSms(
+    phones: string | string[],
+    content: string,
+    opts: { pollTimeoutMs?: number; pollIntervalMs?: number } = {}
+  ): Promise<SendSmsResult> {
     const phoneList = (Array.isArray(phones) ? phones : [phones])
       .map(normalizePhone)
       .filter(Boolean);
@@ -871,7 +791,7 @@ export class HuaweiCpeClient {
     const pollTimeoutMs = opts.pollTimeoutMs ?? 45000;
     const pollIntervalMs = opts.pollIntervalMs ?? 2000;
 
-    return await this.withSession(async (session) => {
+    const result = await this.withSession(async (session): Promise<SendSmsResult> => {
       await session.postEncrypted(
         "/api/sms/send-sms",
         {
@@ -906,7 +826,9 @@ export class HuaweiCpeClient {
             .split(/[,;]/)
             .map((s) => s.trim())
             .filter(Boolean);
-          const ok = failedPhones.length === 0 && (sentPhones.length > 0 || !failCode || failCode === "0");
+          const ok =
+            failedPhones.length === 0 &&
+            (sentPhones.length > 0 || !failCode || failCode === "0");
 
           return {
             ok,
@@ -931,19 +853,20 @@ export class HuaweiCpeClient {
         segments: modeInfo.segments,
       };
     });
+
+    if (!result) {
+      throw new Error("CPE 会话获取失败");
+    }
+    return result;
   }
 
-  /**
-   * Mark one or more SMS messages as read (`/api/sms/set-read`).
-   *
-   * @param {Array<number | string>} indices
-   */
-  async markRead(indices) {
-    const clean = [...new Set(indices.map((i) => Number.parseInt(String(i), 10)).filter((n) => n > 0))];
+  async markRead(indices: Array<number | string>): Promise<{ count: number }> {
+    const clean = [
+      ...new Set(indices.map((i) => Number.parseInt(String(i), 10)).filter((n) => n > 0)),
+    ];
     if (clean.length === 0) return { count: 0 };
 
     await this.withSession(async (session) => {
-      // Huawei firmware accepts up to ~20 <Index> tags per set-read call
       for (let i = 0; i < clean.length; i += 20) {
         const batch = clean.slice(i, i + 20);
         await session.postRaw("/api/sms/set-read", buildXmlRequest({ Index: batch }));
@@ -952,13 +875,10 @@ export class HuaweiCpeClient {
     return { count: clean.length };
   }
 
-  /**
-   * Delete one or more SMS messages by index (`/api/sms/delete-sms`).
-   *
-   * @param {Array<number | string>} indices
-   */
-  async deleteSms(indices) {
-    const clean = [...new Set(indices.map((i) => Number.parseInt(String(i), 10)).filter((n) => n > 0))];
+  async deleteSms(indices: Array<number | string>): Promise<{ count: number }> {
+    const clean = [
+      ...new Set(indices.map((i) => Number.parseInt(String(i), 10)).filter((n) => n > 0)),
+    ];
     if (clean.length === 0) return { count: 0 };
 
     await this.withSession(async (session) => {
@@ -970,12 +890,7 @@ export class HuaweiCpeClient {
     return { count: clean.length };
   }
 
-  /**
-   * Delete entire conversation threads by phone/sender (`/api/sms/sms-delete-phone`, `enc-type=2`).
-   *
-   * @param {string[]} phones
-   */
-  async deleteContacts(phones) {
+  async deleteContacts(phones: string[]): Promise<{ count: number }> {
     const clean = phones.map((p) => p.trim()).filter(Boolean);
     if (clean.length === 0) return { count: 0 };
 

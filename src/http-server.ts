@@ -3,37 +3,40 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { detectSmsTextMode } from "./crypto.js";
-import { COUNTRY_DIAL_CODES, resolveRecipientPhone } from "./phone.js";
-import { formatHuaweiDate } from "./xml.js";
+import type { ContactStore } from "./contacts.ts";
+import type { HuaweiCpeClient } from "./cpe-client.ts";
+import { detectSmsTextMode } from "./crypto.ts";
+import { COUNTRY_DIAL_CODES, resolveRecipientPhone } from "./phone.ts";
+import type { SmsPoller } from "./poller.ts";
+import type { SmsArchiveStore } from "./sms-archive.ts";
+import { formatHuaweiDate } from "./xml.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PUBLIC_DIR = path.join(__dirname, "web", "public");
 const SESSION_COOKIE_NAME = "cpe_sms_session";
 
-/**
- * Compute deterministic HMAC session token from `apiToken` so valid browser cookies survive
- * restarts as long as `CPE_PASSWORD` / `API_TOKEN` remains unchanged.
- *
- * @param {string} secret
- * @returns {string}
- */
-function makeSessionSignature(secret) {
+function resolvePublicDir(): string {
+  const localCandidate = path.join(__dirname, "web", "public");
+  if (fs.existsSync(localCandidate)) return localCandidate;
+  return path.resolve(__dirname, "..", "src", "web", "public");
+}
+
+const PUBLIC_DIR = resolvePublicDir();
+
+const SECURITY_HEADERS: Readonly<Record<string, string>> = {
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "no-referrer",
+};
+
+function makeSessionSignature(secret: string): string {
   return crypto
     .createHmac("sha256", Buffer.from(secret, "utf8"))
     .update("cpe-sms-webui-session-v1")
     .digest("hex");
 }
 
-/**
- * Parse HTTP `Cookie` header into a key-value map.
- *
- * @param {string | undefined} cookieHeader
- * @returns {Record<string, string>}
- */
-function parseCookies(cookieHeader) {
-  /** @type {Record<string, string>} */
-  const out = {};
+function parseCookies(cookieHeader: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
   if (!cookieHeader) return out;
   for (const part of cookieHeader.split(";")) {
     const eq = part.indexOf("=");
@@ -44,28 +47,33 @@ function parseCookies(cookieHeader) {
   return out;
 }
 
-/**
- * Timing-safe string comparison.
- *
- * @param {string} a
- * @param {string} b
- * @returns {boolean}
- */
-function timingSafeEqualStr(a, b) {
+function timingSafeEqualStr(a: string, b: string): boolean {
   if (!a || !b) return false;
   const bufA = Buffer.from(a, "utf8");
   const bufB = Buffer.from(b, "utf8");
   return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
 }
 
-/**
- * Verify either `Authorization: Bearer <token>`, `X-API-Token`, or signed `HttpOnly` Web UI cookie.
- *
- * @param {http.IncomingMessage} req
- * @param {string} expectedToken
- * @returns {boolean}
- */
-function isRequestAuthorized(req, expectedToken) {
+function isRequestHttps(req: http.IncomingMessage): boolean {
+  const xfProto = req.headers["x-forwarded-proto"];
+  const protoStr = Array.isArray(xfProto) ? xfProto[0] : xfProto;
+  if (protoStr && protoStr.split(",")[0]?.trim().toLowerCase() === "https") {
+    return true;
+  }
+  return Boolean((req.socket as { encrypted?: boolean }).encrypted);
+}
+
+function getClientIp(req: http.IncomingMessage): string {
+  const xff = req.headers["x-forwarded-for"];
+  const xffStr = Array.isArray(xff) ? xff[0] : xff;
+  if (xffStr) {
+    const first = xffStr.split(",")[0]?.trim();
+    if (first) return first;
+  }
+  return req.socket.remoteAddress ?? "unknown";
+}
+
+function isRequestAuthorized(req: http.IncomingMessage, expectedToken: string): boolean {
   if (!expectedToken) return false;
 
   const authHeader = req.headers.authorization ?? "";
@@ -73,8 +81,9 @@ function isRequestAuthorized(req, expectedToken) {
     const provided = authHeader.slice(7).trim();
     if (timingSafeEqualStr(provided, expectedToken)) return true;
   }
-  if (typeof req.headers["x-api-token"] === "string") {
-    if (timingSafeEqualStr(req.headers["x-api-token"].trim(), expectedToken)) return true;
+  const xToken = req.headers["x-api-token"];
+  if (typeof xToken === "string" && timingSafeEqualStr(xToken.trim(), expectedToken)) {
+    return true;
   }
 
   const cookies = parseCookies(req.headers.cookie);
@@ -86,19 +95,14 @@ function isRequestAuthorized(req, expectedToken) {
   return false;
 }
 
-/**
- * Read JSON request body up to `maxBytes`.
- *
- * @param {http.IncomingMessage} req
- * @param {number} [maxBytes=1048576]
- * @returns {Promise<Record<string, any>>}
- */
-function readJsonBody(req, maxBytes = 1024 * 1024) {
+function readJsonBody(
+  req: http.IncomingMessage,
+  maxBytes = 1024 * 1024
+): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    /** @type {Buffer[]} */
-    const chunks = [];
+    const chunks: Buffer[] = [];
     let total = 0;
-    req.on("data", (chunk) => {
+    req.on("data", (chunk: Buffer) => {
       total += chunk.length;
       if (total > maxBytes) {
         reject(new Error("Payload too large"));
@@ -114,7 +118,7 @@ function readJsonBody(req, maxBytes = 1024 * 1024) {
         return;
       }
       try {
-        resolve(JSON.parse(raw));
+        resolve(JSON.parse(raw) as Record<string, unknown>);
       } catch {
         reject(new Error("Invalid JSON body"));
       }
@@ -123,25 +127,23 @@ function readJsonBody(req, maxBytes = 1024 * 1024) {
   });
 }
 
-/**
- * Send JSON HTTP response.
- *
- * @param {http.ServerResponse} res
- * @param {number} status
- * @param {unknown} data
- * @param {Record<string, string>} [extraHeaders]
- */
-function sendJson(res, status, data, extraHeaders = {}) {
+function sendJson(
+  res: http.ServerResponse,
+  status: number,
+  data: unknown,
+  extraHeaders: Record<string, string> = {}
+): void {
   const body = JSON.stringify(data);
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
-    "Content-Length": Buffer.byteLength(body),
+    "Content-Length": String(Buffer.byteLength(body)),
+    ...SECURITY_HEADERS,
     ...extraHeaders,
   });
   res.end(body);
 }
 
-const MIME_TYPES = {
+const MIME_TYPES: Readonly<Record<string, string>> = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
@@ -150,14 +152,7 @@ const MIME_TYPES = {
   ".ico": "image/x-icon",
 };
 
-/**
- * Serve static files from `src/web/public`.
- *
- * @param {string} pathname
- * @param {http.ServerResponse} res
- * @returns {boolean}
- */
-function serveStaticAsset(pathname, res) {
+function serveStaticAsset(pathname: string, res: http.ServerResponse): boolean {
   const relPath = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
   const resolved = path.resolve(PUBLIC_DIR, relPath);
   if (!resolved.startsWith(PUBLIC_DIR)) {
@@ -171,27 +166,30 @@ function serveStaticAsset(pathname, res) {
   const content = fs.readFileSync(resolved);
   res.writeHead(200, {
     "Content-Type": contentType,
-    "Content-Length": content.length,
+    "Content-Length": String(content.length),
     "Cache-Control": ext === ".html" ? "no-cache" : "public, max-age=300",
+    ...SECURITY_HEADERS,
   });
   res.end(content);
   return true;
 }
 
+export interface HttpApiServerDeps {
+  cpeClient: HuaweiCpeClient;
+  poller?: SmsPoller;
+  archiveStore?: SmsArchiveStore;
+  contactStore?: ContactStore;
+  apiToken: string;
+  defaultCountryCode?: string;
+  serveWebUi?: boolean;
+  maxLoginFailures?: number;
+  loginWindowMs?: number;
+}
+
 /**
  * Create the HTTP REST API + real-time SSE + optional daisyUI Web App server.
- *
- * @param {{
- *   cpeClient: import("./cpe-client.js").HuaweiCpeClient,
- *   poller?: import("./poller.js").SmsPoller,
- *   archiveStore?: import("./sms-archive.js").SmsArchiveStore,
- *   contactStore?: import("./contacts.js").ContactStore,
- *   apiToken: string,
- *   defaultCountryCode?: string,
- *   serveWebUi?: boolean
- * }} deps
  */
-export function createHttpApiServer(deps) {
+export function createHttpApiServer(deps: HttpApiServerDeps): http.Server {
   const {
     cpeClient,
     poller,
@@ -200,18 +198,34 @@ export function createHttpApiServer(deps) {
     apiToken,
     defaultCountryCode = "+353",
     serveWebUi = false,
+    maxLoginFailures = 8,
+    loginWindowMs = 10 * 60 * 1000,
   } = deps;
 
-  /** @type {Set<http.ServerResponse>} */
-  const sseClients = new Set();
+  const sseClients = new Set<http.ServerResponse>();
+  const loginFailures = new Map<string, { count: number; resetAt: number }>();
 
-  /**
-   * Broadcast a live event to all connected Web UI tabs.
-   *
-   * @param {string} event
-   * @param {unknown} payload
-   */
-  const broadcastSse = (event, payload) => {
+  const isIpRateLimited = (ip: string): boolean => {
+    const entry = loginFailures.get(ip);
+    if (!entry) return false;
+    if (Date.now() > entry.resetAt) {
+      loginFailures.delete(ip);
+      return false;
+    }
+    return entry.count >= maxLoginFailures;
+  };
+
+  const recordLoginFailure = (ip: string): void => {
+    const now = Date.now();
+    const cur = loginFailures.get(ip);
+    if (!cur || now > cur.resetAt) {
+      loginFailures.set(ip, { count: 1, resetAt: now + loginWindowMs });
+    } else {
+      cur.count += 1;
+    }
+  };
+
+  const broadcastSse = (event: string, payload: unknown): void => {
     if (sseClients.size === 0) return;
     const frame = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
     for (const client of sseClients) {
@@ -251,7 +265,6 @@ export function createHttpApiServer(deps) {
       const pathname = url.pathname;
       const method = (req.method ?? "GET").toUpperCase();
 
-      // 1. Unauthenticated health check
       if (method === "GET" && pathname === "/healthz") {
         sendJson(res, 200, {
           ok: true,
@@ -263,12 +276,10 @@ export function createHttpApiServer(deps) {
         return;
       }
 
-      // 2. Static daisyUI Web App assets (auth is checked dynamically via `/api/auth/check`)
       if (serveWebUi && method === "GET" && !pathname.startsWith("/api/")) {
         if (serveStaticAsset(pathname, res)) return;
       }
 
-      // 3. Web UI session auth endpoints
       if (method === "GET" && pathname === "/api/auth/check") {
         sendJson(res, 200, {
           ok: true,
@@ -279,50 +290,63 @@ export function createHttpApiServer(deps) {
       }
 
       if (method === "POST" && pathname === "/api/auth/login") {
+        const clientIp = getClientIp(req);
+        if (isIpRateLimited(clientIp)) {
+          sendJson(res, 429, {
+            ok: false,
+            error: "登录尝试过于频繁，请 10 分钟后再试",
+          });
+          return;
+        }
+
         const body = await readJsonBody(req, 16384);
         const pwd = String(body.password ?? body.token ?? "").trim();
         if (!timingSafeEqualStr(pwd, apiToken)) {
+          recordLoginFailure(clientIp);
           sendJson(res, 401, { ok: false, error: "密码或访问令牌错误" });
           return;
         }
+
+        loginFailures.delete(clientIp);
         const sig = makeSessionSignature(apiToken);
         const maxAge = 30 * 24 * 3600;
+        const secureAttr = isRequestHttps(req) ? "; Secure" : "";
         sendJson(
           res,
           200,
           { ok: true, defaultCountryCode },
           {
-            "Set-Cookie": `${SESSION_COOKIE_NAME}=${sig}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax`,
+            "Set-Cookie": `${SESSION_COOKIE_NAME}=${sig}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secureAttr}`,
           }
         );
         return;
       }
 
       if (method === "POST" && pathname === "/api/auth/logout") {
+        const secureAttr = isRequestHttps(req) ? "; Secure" : "";
         sendJson(
           res,
           200,
           { ok: true },
           {
-            "Set-Cookie": `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`,
+            "Set-Cookie": `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secureAttr}`,
           }
         );
         return;
       }
 
-      // 4. All remaining `/api/*` endpoints require Bearer token or authenticated cookie
       if (!isRequestAuthorized(req, apiToken)) {
         sendJson(res, 401, { ok: false, error: "Unauthorized: valid Bearer token or login required" });
         return;
       }
 
-      // 5. Real-time Server-Sent Events (`/api/events`)
       if (method === "GET" && pathname === "/api/events") {
         res.writeHead(200, {
           "Content-Type": "text/event-stream; charset=utf-8",
           "Cache-Control": "no-cache, no-transform",
           Connection: "keep-alive",
           "X-Accel-Buffering": "no",
+          ...SECURITY_HEADERS,
         });
         res.write(
           `event: hello\ndata: ${JSON.stringify({
@@ -340,7 +364,6 @@ export function createHttpApiServer(deps) {
         return;
       }
 
-      // 6. Device & signal status
       if (method === "GET" && pathname === "/api/status") {
         const summary = await cpeClient.getStatusSummary();
         sendJson(res, 200, {
@@ -356,11 +379,10 @@ export function createHttpApiServer(deps) {
         return;
       }
 
-      // 7. Historical SMS Archive & Thread endpoints for Web UI
       if (method === "GET" && pathname === "/api/archive/threads") {
         const search = url.searchParams.get("search") ?? "";
         const filterRaw = url.searchParams.get("filter") ?? "all";
-        const filter =
+        const filter: "all" | "unread" | "otp" =
           filterRaw === "unread" || filterRaw === "otp" ? filterRaw : "all";
         const threads = archiveStore ? archiveStore.listThreads({ search, filter }) : [];
         sendJson(res, 200, {
@@ -390,12 +412,11 @@ export function createHttpApiServer(deps) {
       }
 
       if (method === "POST" && pathname === "/api/archive/sync") {
-        let dump = null;
-        if (poller) {
-          dump = await poller.syncFullHistory({ respectBrowserSession: false });
-        } else {
-          dump = await cpeClient.fetchAllMessages({ respectBrowserSession: false });
-          if (dump && archiveStore) archiveStore.ingestFullDump(dump);
+        const dump = poller
+          ? await poller.syncFullHistory({ respectBrowserSession: false })
+          : await cpeClient.fetchAllMessages({ respectBrowserSession: false });
+        if (!poller && dump && archiveStore) {
+          archiveStore.ingestFullDump(dump);
         }
         sendJson(res, 200, {
           ok: true,
@@ -409,7 +430,6 @@ export function createHttpApiServer(deps) {
         return;
       }
 
-      // Preview encoding / segment count & recipient normalization
       if (method === "POST" && pathname === "/api/sms/preview") {
         const body = await readJsonBody(req, 32768);
         const countryCode = String(body.countryCode ?? defaultCountryCode);
@@ -421,7 +441,6 @@ export function createHttpApiServer(deps) {
         return;
       }
 
-      // 8. Contacts Book & iPhone `.vcf` Import endpoints
       if (method === "GET" && pathname === "/api/contacts/book") {
         const q = url.searchParams.get("search") ?? "";
         const list = contactStore ? contactStore.search(q, 500) : [];
@@ -439,9 +458,9 @@ export function createHttpApiServer(deps) {
         }
         const body = await readJsonBody(req, 65536);
         const saved = contactStore.upsertManualContact({
-          phone: body.phone,
-          name: body.name,
-          note: body.note,
+          phone: String(body.phone ?? ""),
+          name: String(body.name ?? ""),
+          note: body.note !== undefined ? String(body.note) : undefined,
         });
         archiveStore?.emit("contacts:updated", { total: contactStore.contacts.length });
         sendJson(res, 200, { ok: true, data: saved });
@@ -453,7 +472,6 @@ export function createHttpApiServer(deps) {
           sendJson(res, 501, { ok: false, error: "ContactStore not enabled" });
           return;
         }
-        // Allow up to 10 MB `.vcf` file with thousands of iPhone contacts
         const body = await readJsonBody(req, 10 * 1024 * 1024);
         const stats = contactStore.importVcard(String(body.vcf ?? ""));
         archiveStore?.emit("contacts:updated", { total: stats.total });
@@ -462,14 +480,14 @@ export function createHttpApiServer(deps) {
       }
 
       const delContactMatch = pathname.match(/^\/api\/contacts\/book\/([^/]+)$/);
-      if (method === "DELETE" && delContactMatch) {
-        const deleted = contactStore?.deleteContact(decodeURIComponent(delContactMatch[1])) ?? false;
+      if (method === "DELETE" && delContactMatch?.[1]) {
+        const deleted =
+          contactStore?.deleteContact(decodeURIComponent(delContactMatch[1])) ?? false;
         archiveStore?.emit("contacts:updated", { total: contactStore?.contacts.length ?? 0 });
         sendJson(res, 200, { ok: true, deleted });
         return;
       }
 
-      // 9. Direct CPE SMS endpoints (compatible with external REST callers & Web UI)
       if (method === "GET" && pathname === "/api/contacts") {
         const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1;
         const count = Number.parseInt(url.searchParams.get("count") ?? "20", 10) || 20;
@@ -535,7 +553,10 @@ export function createHttpApiServer(deps) {
 
       if (method === "POST" && pathname === "/api/read") {
         const body = await readJsonBody(req, 65536);
-        const indices = Array.isArray(body.indices) ? body.indices : [body.index].filter(Boolean);
+        const rawIndices = Array.isArray(body.indices)
+          ? body.indices
+          : [body.index].filter((v) => v !== undefined && v !== null);
+        const indices = rawIndices.map((v) => String(v));
         const result = await cpeClient.markRead(indices);
         archiveStore?.markReadByCpeIndices(indices);
         sendJson(res, 200, { ok: true, data: result });
@@ -544,8 +565,10 @@ export function createHttpApiServer(deps) {
 
       if (method === "POST" && pathname === "/api/delete") {
         const body = await readJsonBody(req, 65536);
-        const indices = Array.isArray(body.indices) ? body.indices.filter((n) => Number(n) > 0) : [];
-        const uids = Array.isArray(body.uids) ? body.uids : [];
+        const indices = Array.isArray(body.indices)
+          ? body.indices.map(Number).filter((n) => n > 0)
+          : [];
+        const uids = Array.isArray(body.uids) ? body.uids.map(String) : [];
         const deleteFromCpe = body.deleteFromCpe !== false;
         const deleteFromArchive = Boolean(body.deleteFromArchive);
 
@@ -553,7 +576,9 @@ export function createHttpApiServer(deps) {
           await cpeClient.deleteSms(indices);
         }
         if (indices.length > 0) {
-          archiveStore?.markDeletedByCpeIndices(indices, { removeFromArchive: deleteFromArchive });
+          archiveStore?.markDeletedByCpeIndices(indices, {
+            removeFromArchive: deleteFromArchive,
+          });
         }
         if (deleteFromArchive && uids.length > 0) {
           archiveStore?.deleteArchiveUids(uids);
@@ -569,7 +594,7 @@ export function createHttpApiServer(deps) {
       }
 
       const delMatch = pathname.match(/^\/api\/messages\/(\d+)$/);
-      if (method === "DELETE" && delMatch) {
+      if (method === "DELETE" && delMatch?.[1]) {
         const result = await cpeClient.deleteSms([delMatch[1]]);
         archiveStore?.markDeletedByCpeIndices([delMatch[1]]);
         sendJson(res, 200, { ok: true, data: result });
@@ -578,8 +603,9 @@ export function createHttpApiServer(deps) {
 
       sendJson(res, 404, { ok: false, error: "Not found" });
     } catch (err) {
-      const status = err.message === "Invalid JSON body" ? 400 : 500;
-      sendJson(res, status, { ok: false, error: err.message });
+      const message = err instanceof Error ? err.message : String(err);
+      const status = message === "Invalid JSON body" ? 400 : 500;
+      sendJson(res, status, { ok: false, error: message });
     }
   });
 
@@ -588,15 +614,10 @@ export function createHttpApiServer(deps) {
 }
 
 /**
- * Create a standalone Web UI frontend + reverse proxy server (`node src/cli.js web`)
+ * Create a standalone Web UI frontend + reverse proxy server (`node dist/cli.js web`)
  * for optional decoupled Docker Compose deployment (`docker compose --profile web up -d`).
- *
- * Serves static daisyUI assets locally and streams `/api/*` + `/healthz` (including SSE)
- * to the upstream core daemon (`http://cpe-sms:8080`).
- *
- * @param {{ upstreamUrl: string }} opts
  */
-export function createWebProxyServer(opts) {
+export function createWebProxyServer(opts: { upstreamUrl: string }): http.Server {
   const upstream = new URL(opts.upstreamUrl);
 
   return http.createServer((req, res) => {

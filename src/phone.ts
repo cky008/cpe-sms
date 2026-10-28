@@ -1,10 +1,10 @@
+import type { CountryDialInfo, ResolvedRecipient, SenderInfo } from "./types.ts";
+
 /**
  * International calling code table with flag emoji, Chinese/English names,
  * and national trunk `'0'` stripping rules for E.164 formatting.
- *
- * Ordered / matched by longest dial code first (`+353` before `+3...`).
  */
-export const COUNTRY_DIAL_CODES = [
+export const COUNTRY_DIAL_CODES: readonly CountryDialInfo[] = [
   { code: "+353", iso: "IE", flag: "🇮🇪", nameZh: "爱尔兰", nameEn: "Ireland", dropTrunkZero: true },
   { code: "+86", iso: "CN", flag: "🇨🇳", nameZh: "中国大陆", nameEn: "China", dropTrunkZero: false },
   { code: "+44", iso: "GB", flag: "🇬🇧", nameZh: "英国", nameEn: "United Kingdom", dropTrunkZero: true },
@@ -65,24 +65,16 @@ const SORTED_BY_CODE_LEN = [...COUNTRY_DIAL_CODES].sort(
   (a, b) => b.code.length - a.code.length
 );
 
-const BY_CODE_MAP = new Map(COUNTRY_DIAL_CODES.map((c) => [c.code, c]));
+const BY_CODE_MAP = new Map<string, CountryDialInfo>(
+  COUNTRY_DIAL_CODES.map((c) => [c.code, c])
+);
 
-/**
- * Look up country metadata by dial code (e.g. `"+353"`).
- *
- * @param {string} dialCode
- */
-export function getCountryByDialCode(dialCode) {
+export function getCountryByDialCode(dialCode: string): CountryDialInfo | null {
   const normalized = dialCode.startsWith("+") ? dialCode : `+${dialCode}`;
   return BY_CODE_MAP.get(normalized) ?? null;
 }
 
-/**
- * Match the longest calling code prefix from an E.164 phone string (`+...`).
- *
- * @param {string} e164
- */
-export function matchCountryFromE164(e164) {
+export function matchCountryFromE164(e164: string): CountryDialInfo | null {
   if (!e164 || !e164.startsWith("+")) return null;
   for (const entry of SORTED_BY_CODE_LEN) {
     if (e164.startsWith(entry.code) && e164.length > entry.code.length) {
@@ -92,13 +84,7 @@ export function matchCountryFromE164(e164) {
   return null;
 }
 
-/**
- * Extract brand/sender signature from SMS body such as `【Apple】`, `【中国移动】`, `[GitHub]`.
- *
- * @param {string} content
- * @returns {string | null}
- */
-export function extractBrandSignature(content) {
+export function extractBrandSignature(content: string): string | null {
   if (!content) return null;
   const trimmed = content.trim();
   const leadingBracket = trimmed.match(/^(?:【([^】]{1,20})】|\[([^\]]{2,20})\])/);
@@ -116,27 +102,17 @@ export function extractBrandSignature(content) {
   return null;
 }
 
-/**
- * Strip formatting punctuation (` `, `-`, `(`, `)`, `.`) from a phone string.
- *
- * @param {string} raw
- * @returns {string}
- */
-export function cleanPhoneFormatting(raw) {
+export function cleanPhoneFormatting(raw: string): string {
   return String(raw ?? "")
     .trim()
     .replace(/[\s\-().\u00A0\u200B-\u200D\u202A-\u202E]/g, "");
 }
 
-/**
- * Parse any incoming or outgoing SMS sender/recipient string into rich structured metadata
- * (country flag, country name, dial code, E.164 normalized number, dialability, brand signature).
- *
- * @param {string} rawPhone
- * @param {string} [smsContent=""]
- * @param {string} [defaultCountryCode="+353"]
- */
-export function parseSenderInfo(rawPhone, smsContent = "", defaultCountryCode = "+353") {
+export function parseSenderInfo(
+  rawPhone: string,
+  smsContent = "",
+  defaultCountryCode = "+353"
+): SenderInfo {
   const raw = String(rawPhone ?? "").trim();
   const brandHint = extractBrandSignature(smsContent);
 
@@ -155,7 +131,6 @@ export function parseSenderInfo(rawPhone, smsContent = "", defaultCountryCode = 
     };
   }
 
-  // 1. Alphanumeric Sender ID (e.g. `Three`, `Apple`, `Revolut`, `AUTMSG`)
   if (/[A-Za-z\u4e00-\u9fa5]/.test(raw)) {
     return {
       type: "alphanumeric",
@@ -173,7 +148,6 @@ export function parseSenderInfo(rawPhone, smsContent = "", defaultCountryCode = 
 
   const cleaned = cleanPhoneFormatting(raw);
 
-  // 2. Chinese 106xxxx enterprise SMS gateway numbers
   if (/^106\d{5,17}$/.test(cleaned)) {
     return {
       type: "gateway",
@@ -189,7 +163,6 @@ export function parseSenderInfo(rawPhone, smsContent = "", defaultCountryCode = 
     };
   }
 
-  // 3. Carrier / service short codes (1-6 digits, e.g. `3`, `171`, `50272` on 3Ireland, `10086` on CMCC)
   if (/^\d{1,6}$/.test(cleaned)) {
     return {
       type: "shortcode",
@@ -205,7 +178,6 @@ export function parseSenderInfo(rawPhone, smsContent = "", defaultCountryCode = 
     };
   }
 
-  // 4. Bare international mobile without `+` delivered by some SMSCs (strict length to avoid Irish 086 clash)
   if (/^(?:861[3-9]\d{9}|447\d{9}|852[4-9]\d{7})$/.test(cleaned)) {
     const e164 = `+${cleaned}`;
     const country = matchCountryFromE164(e164);
@@ -225,7 +197,6 @@ export function parseSenderInfo(rawPhone, smsContent = "", defaultCountryCode = 
     }
   }
 
-  // 4. Explicit international number (`+...` or `00...`)
   if (cleaned.startsWith("+") || cleaned.startsWith("00")) {
     const e164 = cleaned.startsWith("00") ? `+${cleaned.slice(2)}` : cleaned;
     if (/^\+\d{6,18}$/.test(e164)) {
@@ -259,10 +230,8 @@ export function parseSenderInfo(rawPhone, smsContent = "", defaultCountryCode = 
     }
   }
 
-  // 5. National number without `+` — resolve using `defaultCountryCode` (default `+353` Ireland)
   if (/^\d{7,15}$/.test(cleaned)) {
     const defCountry = getCountryByDialCode(defaultCountryCode);
-    // Check if digits accidentally start with the dial code without `+` (e.g. `353831234567`)
     const bareCode = (defaultCountryCode || "+353").replace(/^\+/, "");
     if (cleaned.startsWith(bareCode) && cleaned.length >= bareCode.length + 7 && defCountry) {
       const e164 = `+${cleaned}`;
@@ -313,21 +282,10 @@ export function parseSenderInfo(rawPhone, smsContent = "", defaultCountryCode = 
   };
 }
 
-/**
- * Resolve user-entered recipient number under a chosen default country (e.g. `+353` Ireland)
- * into a clean dialable number + country metadata for guided sending.
- *
- * Examples with `selectedCountryCode = "+353"`:
- * - `"083 123 4567"` -> `{ ok: true, phone: "+353831234567", flag: "🇮🇪", countryZh: "爱尔兰", ... }`
- * - `"831234567"`    -> `{ ok: true, phone: "+353831234567", flag: "🇮🇪", countryZh: "爱尔兰", ... }`
- * - `"+8613800138000"` -> `{ ok: true, phone: "+8613800138000", flag: "🇨🇳", countryZh: "中国大陆", ... }`
- * - `"00447911123456"` -> `{ ok: true, phone: "+447911123456", flag: "🇬🇧", countryZh: "英国", ... }`
- * - `"50272"`        -> `{ ok: true, phone: "50272", flag: "📟", countryZh: "运营商/服务短号", ... }`
- *
- * @param {string} rawInput
- * @param {string} [selectedCountryCode="+353"]
- */
-export function resolveRecipientPhone(rawInput, selectedCountryCode = "+353") {
+export function resolveRecipientPhone(
+  rawInput: string,
+  selectedCountryCode = "+353"
+): ResolvedRecipient {
   const cleaned = cleanPhoneFormatting(rawInput);
   if (!cleaned) {
     return { ok: false, error: "号码不能为空" };
@@ -339,7 +297,6 @@ export function resolveRecipientPhone(rawInput, selectedCountryCode = "+353") {
     };
   }
 
-  // Short code (3-6 digits without `+` and not starting with `00`)
   if (!cleaned.startsWith("+") && !cleaned.startsWith("00") && /^\d{3,6}$/.test(cleaned)) {
     return {
       ok: true,
@@ -351,7 +308,6 @@ export function resolveRecipientPhone(rawInput, selectedCountryCode = "+353") {
     };
   }
 
-  // Explicit international `+` or `00`
   if (cleaned.startsWith("+") || cleaned.startsWith("00")) {
     const e164 = cleaned.startsWith("00") ? `+${cleaned.slice(2)}` : cleaned;
     if (!/^\+\d{7,18}$/.test(e164)) {
@@ -368,12 +324,11 @@ export function resolveRecipientPhone(rawInput, selectedCountryCode = "+353") {
     };
   }
 
-  // National input -> combine with `selectedCountryCode`
   const country = getCountryByDialCode(selectedCountryCode);
-  const code = country?.code ?? (selectedCountryCode.startsWith("+") ? selectedCountryCode : `+${selectedCountryCode}`);
+  const code =
+    country?.code ?? (selectedCountryCode.startsWith("+") ? selectedCountryCode : `+${selectedCountryCode}`);
   const bareCode = code.replace(/^\+/, "");
 
-  // If user already typed `353831234567` without `+`, avoid doubling `+353353...`
   if (cleaned.startsWith(bareCode) && cleaned.length >= bareCode.length + 7) {
     const e164 = `+${cleaned}`;
     return {
@@ -403,15 +358,7 @@ export function resolveRecipientPhone(rawInput, selectedCountryCode = "+353") {
   };
 }
 
-/**
- * Canonical thread key so messages with `"0831234567"` and `"+353831234567"` merge into the
- * same conversation thread while preserving alphanumeric sender IDs (`"Three"`, `"Apple"`).
- *
- * @param {string} rawPhone
- * @param {string} [defaultCountryCode="+353"]
- * @returns {string}
- */
-export function canonicalThreadKey(rawPhone, defaultCountryCode = "+353") {
+export function canonicalThreadKey(rawPhone: string, defaultCountryCode = "+353"): string {
   const raw = String(rawPhone ?? "").trim();
   if (!raw) return "unknown";
   if (/[A-Za-z\u4e00-\u9fa5]/.test(raw)) {
@@ -421,16 +368,8 @@ export function canonicalThreadKey(rawPhone, defaultCountryCode = "+353") {
   return info.e164 ?? cleanPhoneFormatting(raw);
 }
 
-/**
- * Generate lookup keys for contact matching (exact E.164, digits-only, and 9-digit mobile suffix)
- * so contacts saved in iPhone with or without country code always match reliably.
- *
- * @param {string} rawPhone
- * @param {string} [defaultCountryCode="+353"]
- * @returns {string[]}
- */
-export function buildPhoneLookupKeys(rawPhone, defaultCountryCode = "+353") {
-  const keys = new Set();
+export function buildPhoneLookupKeys(rawPhone: string, defaultCountryCode = "+353"): string[] {
+  const keys = new Set<string>();
   const raw = String(rawPhone ?? "").trim();
   if (!raw) return [];
 
@@ -447,8 +386,6 @@ export function buildPhoneLookupKeys(rawPhone, defaultCountryCode = "+353") {
     keys.add(info.e164);
     const digits = info.e164.replace(/^\+/, "");
     keys.add(digits);
-    // 9-digit tail matches Irish (`831234567`), UK (`7911123456`->last 9), Chinese (`13800138000`->last 9)
-    // regardless of whether stored with local `0` or `+country`!
     if (digits.length >= 9) {
       keys.add(`tail9:${digits.slice(-9)}`);
     }

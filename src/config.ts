@@ -1,16 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
+import type { AppConfig } from "./types.ts";
+
+export interface LoadConfigOptions {
+  envPath?: string;
+  overrides?: Record<string, string>;
+  ignoreProcessEnv?: boolean;
+}
 
 /**
- * Parse a `.env` file string into key-value pairs without mutating `process.env`
- * for keys that are already explicitly set in the environment.
- *
- * @param {string} content
- * @returns {Record<string, string>}
+ * Parse a `.env` file string into key-value pairs without mutating `process.env`.
  */
-export function parseDotEnv(content) {
-  /** @type {Record<string, string>} */
-  const result = {};
+export function parseDotEnv(content: string): Record<string, string> {
+  const result: Record<string, string> = {};
   for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
@@ -42,11 +44,8 @@ export function parseDotEnv(content) {
 
 /**
  * Normalize CPE base URL (strip hash routes like `#/sms` and trailing slashes).
- *
- * @param {string} rawUrl
- * @returns {string}
  */
-export function normalizeCpeUrl(rawUrl) {
+export function normalizeCpeUrl(rawUrl: string): string {
   let url = (rawUrl || "http://192.168.8.1").trim();
   if (!/^https?:\/\//i.test(url)) {
     url = `http://${url}`;
@@ -55,14 +54,7 @@ export function normalizeCpeUrl(rawUrl) {
   return `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/+$/, "")}`;
 }
 
-/**
- * Parse boolean environment string.
- *
- * @param {string | undefined} val
- * @param {boolean} defaultValue
- * @returns {boolean}
- */
-function parseBool(val, defaultValue) {
+function parseBool(val: string | undefined, defaultValue: boolean): boolean {
   if (val === undefined || val === "") return defaultValue;
   const v = val.trim().toLowerCase();
   if (["1", "true", "yes", "on"].includes(v)) return true;
@@ -70,14 +62,7 @@ function parseBool(val, defaultValue) {
   return defaultValue;
 }
 
-/**
- * Parse integer environment string.
- *
- * @param {string | undefined} val
- * @param {number} defaultValue
- * @returns {number}
- */
-function parseIntSafe(val, defaultValue) {
+function parseIntSafe(val: string | undefined, defaultValue: number): number {
   if (val === undefined || val === "") return defaultValue;
   const n = Number.parseInt(val, 10);
   return Number.isFinite(n) ? n : defaultValue;
@@ -85,23 +70,20 @@ function parseIntSafe(val, defaultValue) {
 
 /**
  * Load application configuration from `.env` and `process.env`.
- *
- * @param {{ envPath?: string, overrides?: Record<string, string> }} [options]
  */
-export function loadConfig(options = {}) {
+export function loadConfig(options: LoadConfigOptions = {}): AppConfig {
   const envPath = options.envPath ?? path.resolve(process.cwd(), ".env");
-  /** @type {Record<string, string>} */
-  let fileEnv = {};
+  let fileEnv: Record<string, string> = {};
   if (fs.existsSync(envPath)) {
     fileEnv = parseDotEnv(fs.readFileSync(envPath, "utf8"));
   }
 
-  const get = (/** @type {string[]} */ ...keys) => {
+  const get = (...keys: string[]): string | undefined => {
     for (const k of keys) {
       if (options.overrides?.[k] !== undefined && options.overrides[k] !== "") {
         return options.overrides[k];
       }
-      if (process.env[k] !== undefined && process.env[k] !== "") {
+      if (!options.ignoreProcessEnv && process.env[k] !== undefined && process.env[k] !== "") {
         return process.env[k];
       }
       if (fileEnv[k] !== undefined && fileEnv[k] !== "") {
@@ -114,6 +96,7 @@ export function loadConfig(options = {}) {
   const cpeUrl = normalizeCpeUrl(get("CPE_URL", "CPE_HOST") ?? "http://192.168.8.1");
   const cpeUsername = get("CPE_USERNAME", "CPE_USER") ?? "admin";
   const cpePassword = get("CPE_PASSWORD", "CPEPASSWORD") ?? "";
+  const dataEncryptionKey = get("DATA_ENCRYPTION_KEY") ?? cpePassword;
   const telegramToken = get("TELEGRAM_API", "TELEGRAM_BOT_TOKEN") ?? "";
   const telegramApiBase = (get("TELEGRAM_API_BASE") ?? "https://api.telegram.org").replace(/\/+$/, "");
 
@@ -143,14 +126,14 @@ export function loadConfig(options = {}) {
     get("CONTACTS_FILE") ?? path.join(dataDir, "contacts.json")
   );
 
-  // Optional daisyUI Real-Time Web UI on high port (default: enabled on 18383)
+  // Real-time daisyUI Web UI + REST API unified on high port 18383 by default
   const webEnabled = parseBool(get("WEB_ENABLED", "WEB_UI_ENABLED"), true);
   const webPort = Math.max(0, parseIntSafe(get("WEB_PORT"), 18383));
   const webHost = get("WEB_HOST") ?? "0.0.0.0";
   const webUpstreamUrl = (get("WEB_UPSTREAM_URL") ?? "").replace(/\/+$/, "");
 
-  // Optional separate REST API port (set 0 to disable if using WEB_PORT alone, or keep 8080)
-  const httpPort = Math.max(0, parseIntSafe(get("HTTP_PORT", "API_PORT"), 8080));
+  // Separate headless HTTP port defaults to 0 (disabled) so port 8080 is never occupied on NAS
+  const httpPort = Math.max(0, parseIntSafe(get("HTTP_PORT", "API_PORT"), 0));
   const httpHost = get("HTTP_HOST") ?? "0.0.0.0";
   const apiToken = get("API_TOKEN") ?? cpePassword;
   const webhookUrl = get("WEBHOOK_URL") ?? "";
@@ -159,6 +142,7 @@ export function loadConfig(options = {}) {
     cpeUrl,
     cpeUsername,
     cpePassword,
+    dataEncryptionKey,
     telegramToken,
     telegramApiBase,
     telegramChatIds,

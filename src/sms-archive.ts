@@ -1,48 +1,62 @@
 import { EventEmitter } from "node:events";
-import fs from "node:fs";
-import path from "node:path";
-import { extractVerificationCode } from "./crypto.js";
-import { canonicalThreadKey, parseSenderInfo } from "./phone.js";
+import type { ContactStore } from "./contacts.ts";
+import { extractVerificationCode } from "./crypto.ts";
+import { StorageCipher } from "./encrypted-file.ts";
+import { canonicalThreadKey, parseSenderInfo } from "./phone.ts";
+import type {
+  ArchiveThread,
+  ArchivedSmsMessage,
+  CpeArchiveStats,
+  CpeFullDump,
+  EnrichedSmsMessage,
+  SmsDirection,
+  SmsMessage,
+  ThreadDetail,
+} from "./types.ts";
+
+interface PersistedSmsArchive {
+  version: number;
+  lastFullSyncAt: string | null;
+  cpeStats: CpeArchiveStats;
+  messages: ArchivedSmsMessage[];
+}
+
+export interface ArchiveSyncSummary {
+  added: number;
+  updated: number;
+  archiveTotal: number;
+  cpeStats: CpeArchiveStats;
+  lastFullSyncAt: string;
+}
+
+export type RealtimeSmsEventName = "sms:new" | "sms:sent" | "sms:updated";
 
 /**
- * Persistent local historical SMS archive (`./data/sms-archive.json`).
- *
- * - Stores ALL historical inbox & outbox messages pulled from the CPE so the Web UI
- *   loads instantaneously (<10ms) and retains history even after old SMS are deleted from
- *   the CPE's 500-message storage.
- * - Emits live events (`"sms:new"`, `"sms:sent"`, `"sms:updated"`, `"sms:sync"`) consumed
- *   by the real-time Server-Sent Events (`/api/events`) Web UI stream.
+ * Persistent local historical SMS archive (`./data/sms-archive.json`),
+ * encrypted at rest via `StorageCipher` and emitting live SSE events.
  */
 export class SmsArchiveStore extends EventEmitter {
-  /**
-   * @param {{
-   *   filePath: string,
-   *   contactStore: import("./contacts.js").ContactStore,
-   *   defaultCountryCode?: string
-   * }} opts
-   */
-  constructor(opts) {
+  readonly filePath: string;
+  readonly contactStore: ContactStore;
+  readonly defaultCountryCode: string;
+  readonly cipher: StorageCipher;
+
+  messages: Map<string, ArchivedSmsMessage>;
+  lastFullSyncAt: string | null;
+  cpeStats: CpeArchiveStats;
+
+  constructor(opts: {
+    filePath: string;
+    contactStore: ContactStore;
+    defaultCountryCode?: string;
+    cipher?: StorageCipher;
+  }) {
     super();
     this.filePath = opts.filePath;
     this.contactStore = opts.contactStore;
     this.defaultCountryCode = opts.defaultCountryCode ?? "+353";
+    this.cipher = opts.cipher ?? StorageCipher.fromSecret();
 
-    /**
-     * @type {Map<string, {
-     *   uid: string,
-     *   index: number,
-     *   phone: string,
-     *   content: string,
-     *   date: string,
-     *   smstat: string,
-     *   smstype: string,
-     *   curbox: string,
-     *   isUnread: boolean,
-     *   direction: "in" | "out",
-     *   verificationCode: string | null,
-     *   onCpe: boolean
-     * }>}
-     */
     this.messages = new Map();
     this.lastFullSyncAt = null;
     this.cpeStats = {
@@ -55,22 +69,22 @@ export class SmsArchiveStore extends EventEmitter {
     this.load();
   }
 
-  /**
-   * Deterministic unique key across CPE reboots or index reuse.
-   *
-   * @param {{ index: number, date: string, phone: string, direction?: string }} msg
-   */
-  static makeUid(msg) {
+  static makeUid(msg: {
+    index: number;
+    date: string;
+    phone: string;
+    direction?: SmsDirection;
+  }): string {
     if (msg.index > 0) {
       return `cpe:${msg.index}:${msg.date}:${msg.phone}`;
     }
     return `local:${msg.date}:${msg.phone}:${msg.direction ?? "out"}`;
   }
 
-  load() {
-    if (!fs.existsSync(this.filePath)) return;
+  load(): void {
     try {
-      const raw = JSON.parse(fs.readFileSync(this.filePath, "utf8"));
+      const raw = this.cipher.readJsonFile<Partial<PersistedSmsArchive>>(this.filePath);
+      if (!raw) return;
       if (Array.isArray(raw.messages)) {
         for (const m of raw.messages) {
           if (m && m.uid) this.messages.set(m.uid, m);
@@ -79,44 +93,26 @@ export class SmsArchiveStore extends EventEmitter {
       if (raw.lastFullSyncAt) this.lastFullSyncAt = raw.lastFullSyncAt;
       if (raw.cpeStats) this.cpeStats = { ...this.cpeStats, ...raw.cpeStats };
     } catch (err) {
-      console.warn(`[SmsArchive] Failed to load ${this.filePath}:`, err.message);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[SmsArchive] Failed to load ${this.filePath}: ${msg}`);
     }
   }
 
-  save() {
-    const dir = path.dirname(this.filePath);
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const tmp = `${this.filePath}.${process.pid}.tmp`;
+  save(): void {
     const sorted = [...this.messages.values()].sort((a, b) =>
       a.date > b.date ? -1 : a.date < b.date ? 1 : b.index - a.index
     );
-    const payload = JSON.stringify(
-      {
-        version: 1,
-        lastFullSyncAt: this.lastFullSyncAt,
-        cpeStats: this.cpeStats,
-        messages: sorted,
-      },
-      null,
-      2
-    );
-    fs.writeFileSync(tmp, payload, { encoding: "utf8", mode: 0o600 });
-    fs.renameSync(tmp, this.filePath);
+    const payload: PersistedSmsArchive = {
+      version: 1,
+      lastFullSyncAt: this.lastFullSyncAt,
+      cpeStats: this.cpeStats,
+      messages: sorted,
+    };
+    this.cipher.writeJsonFile(this.filePath, payload);
   }
 
-  /**
-   * Merge a full CPE history dump (`fetchAllMessages`) into the archive.
-   *
-   * @param {{
-   *   localUnread: number,
-   *   localInbox: number,
-   *   localOutbox: number,
-   *   localMax: number,
-   *   messages: Array<any>
-   * }} dump
-   */
-  ingestFullDump(dump) {
-    const liveUids = new Set();
+  ingestFullDump(dump: CpeFullDump): ArchiveSyncSummary {
+    const liveUids = new Set<string>();
     let added = 0;
     let updated = 0;
 
@@ -124,7 +120,7 @@ export class SmsArchiveStore extends EventEmitter {
       const uid = SmsArchiveStore.makeUid(raw);
       liveUids.add(uid);
       const existing = this.messages.get(uid);
-      const record = {
+      const record: ArchivedSmsMessage = {
         uid,
         index: raw.index,
         phone: raw.phone,
@@ -152,7 +148,6 @@ export class SmsArchiveStore extends EventEmitter {
       }
     }
 
-    // Mark archived messages no longer present on CPE as `onCpe = false` (retaining history!)
     for (const [uid, msg] of this.messages.entries()) {
       if (msg.onCpe && msg.index > 0 && !liveUids.has(uid)) {
         msg.onCpe = false;
@@ -170,7 +165,7 @@ export class SmsArchiveStore extends EventEmitter {
     this.lastFullSyncAt = new Date().toISOString();
     this.save();
 
-    const summary = {
+    const summary: ArchiveSyncSummary = {
       added,
       updated,
       archiveTotal: this.messages.size,
@@ -181,30 +176,34 @@ export class SmsArchiveStore extends EventEmitter {
     return summary;
   }
 
-  /**
-   * Record a single real-time incoming or outgoing SMS and broadcast via SSE.
-   *
-   * @param {any} msg
-   * @param {"sms:new" | "sms:sent"} [eventName="sms:new"]
-   */
-  recordRealtimeMessage(msg, eventName = "sms:new") {
-    const uid = SmsArchiveStore.makeUid(msg);
-    const record = {
+  recordRealtimeMessage(
+    msg: Partial<SmsMessage> & { phone: string; content: string; date: string },
+    eventName: RealtimeSmsEventName = "sms:new"
+  ): ArchivedSmsMessage {
+    const direction: SmsDirection = msg.direction ?? "in";
+    const index = msg.index ?? 0;
+    const uid = SmsArchiveStore.makeUid({
+      index,
+      date: msg.date,
+      phone: msg.phone,
+      direction,
+    });
+    const record: ArchivedSmsMessage = {
       uid,
-      index: msg.index ?? 0,
+      index,
       phone: msg.phone,
       content: msg.content,
       date: msg.date,
-      smstat: msg.smstat ?? (msg.direction === "out" ? "3" : "0"),
+      smstat: msg.smstat ?? (direction === "out" ? "3" : "0"),
       smstype: msg.smstype ?? "1",
-      curbox: msg.curbox ?? (msg.direction === "out" ? "1" : "0"),
+      curbox: msg.curbox ?? (direction === "out" ? "1" : "0"),
       isUnread: Boolean(msg.isUnread),
-      direction: msg.direction ?? "in",
+      direction,
       verificationCode:
-        (msg.direction ?? "in") === "in"
+        direction === "in"
           ? msg.verificationCode ?? extractVerificationCode(msg.content)
           : null,
-      onCpe: Boolean(msg.index > 0),
+      onCpe: index > 0,
     };
     this.messages.set(uid, record);
     this.save();
@@ -212,12 +211,7 @@ export class SmsArchiveStore extends EventEmitter {
     return record;
   }
 
-  /**
-   * Update archive read status when messages are marked read on CPE.
-   *
-   * @param {Array<number | string>} indices
-   */
-  markReadByCpeIndices(indices) {
+  markReadByCpeIndices(indices: Array<number | string>): void {
     const idSet = new Set(indices.map((i) => Number.parseInt(String(i), 10)));
     let changed = 0;
     for (const msg of this.messages.values()) {
@@ -234,13 +228,10 @@ export class SmsArchiveStore extends EventEmitter {
     }
   }
 
-  /**
-   * Handle deletion of SMS messages (either from CPE only or from both CPE and local archive).
-   *
-   * @param {Array<number | string>} indices
-   * @param {{ removeFromArchive?: boolean }} [opts]
-   */
-  markDeletedByCpeIndices(indices, opts = {}) {
+  markDeletedByCpeIndices(
+    indices: Array<number | string>,
+    opts: { removeFromArchive?: boolean } = {}
+  ): void {
     const idSet = new Set(indices.map((i) => Number.parseInt(String(i), 10)));
     let changed = 0;
     for (const [uid, msg] of this.messages.entries()) {
@@ -260,12 +251,7 @@ export class SmsArchiveStore extends EventEmitter {
     }
   }
 
-  /**
-   * Delete messages by `uid` from the local archive.
-   *
-   * @param {string[]} uids
-   */
-  deleteArchiveUids(uids) {
+  deleteArchiveUids(uids: string[]): number {
     let removed = 0;
     for (const uid of uids) {
       if (this.messages.delete(uid)) removed += 1;
@@ -277,12 +263,7 @@ export class SmsArchiveStore extends EventEmitter {
     return removed;
   }
 
-  /**
-   * Enrich a message with sender country metadata and matched contact name.
-   *
-   * @param {any} msg
-   */
-  enrichMessage(msg) {
+  enrichMessage(msg: ArchivedSmsMessage): EnrichedSmsMessage {
     const sender = parseSenderInfo(msg.phone, msg.content, this.defaultCountryCode);
     const contact = this.contactStore.resolvePhone(msg.phone);
     return {
@@ -293,34 +274,11 @@ export class SmsArchiveStore extends EventEmitter {
     };
   }
 
-  /**
-   * List aggregated conversation threads across ALL historical messages, with optional search
-   * and filter (`"all" | "unread" | "otp"`).
-   *
-   * @param {{ search?: string, filter?: "all" | "unread" | "otp" }} [opts]
-   */
-  listThreads(opts = {}) {
+  listThreads(opts: { search?: string; filter?: "all" | "unread" | "otp" } = {}): ArchiveThread[] {
     const q = (opts.search ?? "").trim().toLowerCase();
     const filter = opts.filter ?? "all";
+    const map = new Map<string, ArchiveThread>();
 
-    /** @type {Map<string, {
-     *   threadKey: string,
-     *   phone: string,
-     *   replyPhone: string | null,
-     *   dialable: boolean,
-     *   sender: ReturnType<typeof parseSenderInfo>,
-     *   contact: { id: string, name: string, note?: string } | null,
-     *   displayName: string,
-     *   unreadCount: number,
-     *   totalCount: number,
-     *   hasOtp: boolean,
-     *   latestOtp: string | null,
-     *   latestMessage: any,
-     *   matchedPreview?: string
-     * }>} */
-    const map = new Map();
-
-    // Sort newest first so first seen per thread is the latest message
     const allSorted = [...this.messages.values()].sort((a, b) =>
       a.date > b.date ? -1 : a.date < b.date ? 1 : b.index - a.index
     );
@@ -372,7 +330,7 @@ export class SmsArchiveStore extends EventEmitter {
       if (q && !thread.matchedPreview) {
         if (
           msg.content.toLowerCase().includes(q) ||
-          (msg.verificationCode && msg.verificationCode.includes(q))
+          Boolean(msg.verificationCode && msg.verificationCode.includes(q))
         ) {
           thread.matchedPreview = msg.content;
         }
@@ -392,8 +350,8 @@ export class SmsArchiveStore extends EventEmitter {
         (t) =>
           t.displayName.toLowerCase().includes(q) ||
           t.phone.toLowerCase().includes(q) ||
-          (t.sender.e164 && t.sender.e164.toLowerCase().includes(q)) ||
-          (t.sender.countryZh && t.sender.countryZh.toLowerCase().includes(q)) ||
+          Boolean(t.sender.e164 && t.sender.e164.toLowerCase().includes(q)) ||
+          Boolean(t.sender.countryZh && t.sender.countryZh.toLowerCase().includes(q)) ||
           Boolean(t.matchedPreview)
       );
     }
@@ -401,16 +359,9 @@ export class SmsArchiveStore extends EventEmitter {
     return threads;
   }
 
-  /**
-   * Get all chronological messages belonging to a thread (`threadKey` or raw `phone`).
-   *
-   * @param {string} targetKeyOrPhone
-   */
-  getThreadDetail(targetKeyOrPhone) {
-    const wantedKey = targetKeyOrPhone.startsWith("alpha:") || targetKeyOrPhone.startsWith("+")
-      ? (targetKeyOrPhone.startsWith("alpha:")
-          ? targetKeyOrPhone
-          : canonicalThreadKey(targetKeyOrPhone, this.defaultCountryCode))
+  getThreadDetail(targetKeyOrPhone: string): ThreadDetail {
+    const wantedKey = targetKeyOrPhone.startsWith("alpha:")
+      ? targetKeyOrPhone
       : canonicalThreadKey(targetKeyOrPhone, this.defaultCountryCode);
 
     const msgs = [...this.messages.values()]
@@ -420,7 +371,7 @@ export class SmsArchiveStore extends EventEmitter {
 
     const samplePhone = msgs[msgs.length - 1]?.phone ?? targetKeyOrPhone.replace(/^alpha:/, "");
     const sampleContent =
-      [...msgs].reverse().find((m) => m.sender?.brandHint)?.content ?? "";
+      [...msgs].reverse().find((m) => Boolean(m.sender?.brandHint))?.content ?? "";
     const sender = parseSenderInfo(samplePhone, sampleContent, this.defaultCountryCode);
     const contact = this.contactStore.resolvePhone(samplePhone);
 

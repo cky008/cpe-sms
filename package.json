@@ -1,42 +1,56 @@
 {
   "name": "cpe-sms",
-  "version": "1.1.0",
-  "description": "Huawei 5G CPE Ultra 6 (H168-383) SMS gateway with SCRAM-SHA256 + Curve25519/AES-256-GCM protocol support, guided Telegram Bot, real-time daisyUI Web App, and REST/Webhook integration",
+  "version": "2.0.0",
+  "description": "Strict TypeScript Huawei 5G CPE Ultra 6 (H168-383) SMS gateway with SCRAM-SHA256 + Curve25519/AES-256-GCM protocol support, AES-256-GCM encrypted local storage, guided Telegram Bot, real-time daisyUI Web App, and REST/Webhook integration",
   "type": "module",
-  "main": "src/index.js",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "bin": {
-    "cpe-sms": "./src/cli.js"
+    "cpe-sms": "./dist/cli.js"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.6.0"
   },
   "scripts": {
-    "start": "node src/cli.js daemon",
-    "dev": "node --watch src/cli.js daemon",
-    "web": "node src/cli.js web",
+    "typecheck": "tsc -p tsconfig.test.json && tsc -p tsconfig.web.json --noEmit",
     "build:css": "tailwindcss -i src/web/styles.css -o src/web/public/app.css --minify",
-    "cpe:status": "node src/cli.js status",
-    "cpe:inbox": "node src/cli.js inbox",
-    "cpe:thread": "node src/cli.js thread",
-    "cpe:send": "node src/cli.js send",
-    "cpe:sync": "node src/cli.js sync",
-    "test": "node --test test/*.test.js"
+    "build:web": "tsc -p tsconfig.web.json && npm run build:css",
+    "build": "npm run build:web && tsc -p tsconfig.json && node scripts/copy-web-assets.ts",
+    "start": "node dist/cli.js daemon",
+    "dev": "node --watch src/cli.ts daemon",
+    "web": "node dist/cli.js web",
+    "cpe:status": "node src/cli.ts status",
+    "cpe:inbox": "node src/cli.ts inbox",
+    "cpe:thread": "node src/cli.ts thread",
+    "cpe:send": "node src/cli.ts send",
+    "cpe:sync": "node src/cli.ts sync",
+    "cpe:import-vcf": "node src/cli.ts import-vcf",
+    "test": "node --test test/*.test.ts",
+    "test:coverage": "c8 --include='src/**/*.ts' --exclude='src/cli.ts' --exclude='src/types.ts' --exclude='src/web/**' --reporter=text --check-coverage --lines 90 --functions 95 --statements 90 node --test test/*.test.ts",
+    "audit:secrets": "node scripts/audit-secrets.ts",
+    "check": "npm run typecheck && npm run test:coverage && npm run audit:secrets"
   },
   "keywords": [
+    "typescript",
     "huawei",
     "cpe",
     "h168-383",
     "sms",
+    "aes-256-gcm",
     "telegram-bot",
     "daisyui",
     "5g-cpe",
     "tailscale",
+    "synology",
     "nas"
   ],
   "license": "MIT",
   "devDependencies": {
     "@tailwindcss/cli": "^4.3.3",
+    "@types/node": "^26.6.5",
+    "c8": "^12.0.0",
     "daisyui": "^5.7.50",
-    "tailwindcss": "^4.3.3"
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2"
   }
 }

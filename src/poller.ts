@@ -1,5 +1,21 @@
 import { EventEmitter } from "node:events";
-import { extractVerificationCode } from "./crypto.js";
+import type { HuaweiCpeClient } from "./cpe-client.ts";
+import { extractVerificationCode } from "./crypto.ts";
+import type { SmsArchiveStore } from "./sms-archive.ts";
+import type { StateStore } from "./state-store.ts";
+import type { CpeFullDump, SmsMessage } from "./types.ts";
+
+export interface SmsPollerOptions {
+  cpeClient: HuaweiCpeClient;
+  stateStore: StateStore;
+  archiveStore?: SmsArchiveStore;
+  pollIntervalMs?: number;
+  fullSyncIntervalMs?: number;
+  seedExistingOnStart?: boolean;
+  autoMarkRead?: boolean;
+  webhookUrl?: string;
+  fetchImpl?: typeof fetch;
+}
 
 /**
  * Zero-conflict SMS poller:
@@ -7,31 +23,24 @@ import { extractVerificationCode } from "./crypto.js";
  * 2. Opens an ephemeral encrypted session ONLY when `UnreadMessage` changes or when `fullSyncIntervalMs`
  *    elapses while the WebUI is idle (`State != 0`), so browser access to `http://192.168.8.1/#/sms`
  *    is never interrupted.
- * 3. Synchronizes full historical SMS into `SmsArchiveStore` on initial startup (or manual full sync)
- *    and streams real-time incoming messages to both Telegram and the daisyUI Web App.
- *
- * Emits:
- * - `"seeded"`: `{ seededCount, unreadMessages, localInbox, localMax }`
- * - `"new_sms"`: `message` (enriched with `verificationCode`)
- * - `"storage_warning"`: `{ localInbox, localMax, storageFull }`
- * - `"status:update"`: `{ unreadMessages, smsStorageFull, timestamp }`
- * - `"error"`: `Error`
  */
 export class SmsPoller extends EventEmitter {
-  /**
-   * @param {{
-   *   cpeClient: import("./cpe-client.js").HuaweiCpeClient,
-   *   stateStore: import("./state-store.js").StateStore,
-   *   archiveStore?: import("./sms-archive.js").SmsArchiveStore,
-   *   pollIntervalMs?: number,
-   *   fullSyncIntervalMs?: number,
-   *   seedExistingOnStart?: boolean,
-   *   autoMarkRead?: boolean,
-   *   webhookUrl?: string,
-   *   fetchImpl?: typeof fetch
-   * }} opts
-   */
-  constructor(opts) {
+  readonly cpeClient: HuaweiCpeClient;
+  readonly stateStore: StateStore;
+  readonly archiveStore: SmsArchiveStore | null;
+  readonly pollIntervalMs: number;
+  readonly fullSyncIntervalMs: number;
+  readonly seedExistingOnStart: boolean;
+  readonly autoMarkRead: boolean;
+  readonly webhookUrl: string;
+  readonly fetchImpl: typeof fetch;
+
+  #timer: ReturnType<typeof setTimeout> | null;
+  #running: boolean;
+  #syncing: boolean;
+  #lastFullSyncAt: number;
+
+  constructor(opts: SmsPollerOptions) {
     super();
     this.cpeClient = opts.cpeClient;
     this.stateStore = opts.stateStore;
@@ -49,17 +58,10 @@ export class SmsPoller extends EventEmitter {
     this.#lastFullSyncAt = 0;
   }
 
-  /** @type {ReturnType<typeof setTimeout> | null} */
-  #timer;
-  #running;
-  #syncing;
-  #lastFullSyncAt;
-
-  async start() {
+  async start(): Promise<void> {
     if (this.#running) return;
     this.#running = true;
 
-    // If we have an archive store that has never synced yet, load 100% of historical SMS on boot!
     if (this.archiveStore && !this.archiveStore.lastFullSyncAt) {
       await this.syncFullHistory({ isInitial: true });
     } else {
@@ -68,7 +70,7 @@ export class SmsPoller extends EventEmitter {
     this.#scheduleNext();
   }
 
-  stop() {
+  stop(): void {
     this.#running = false;
     if (this.#timer) {
       clearTimeout(this.#timer);
@@ -76,7 +78,7 @@ export class SmsPoller extends EventEmitter {
     }
   }
 
-  #scheduleNext() {
+  #scheduleNext(): void {
     if (!this.#running) return;
     this.#timer = setTimeout(async () => {
       await this.tick();
@@ -84,10 +86,7 @@ export class SmsPoller extends EventEmitter {
     }, this.pollIntervalMs);
   }
 
-  /**
-   * Single lightweight poll tick (unauthenticated!).
-   */
-  async tick() {
+  async tick(): Promise<void> {
     if (this.#syncing) return;
     try {
       const notif = await this.cpeClient.checkNotifications();
@@ -116,12 +115,9 @@ export class SmsPoller extends EventEmitter {
     }
   }
 
-  /**
-   * Pull ALL historical inbox & outbox SMS from the CPE into `archiveStore`.
-   *
-   * @param {{ isInitial?: boolean, respectBrowserSession?: boolean }} [opts]
-   */
-  async syncFullHistory(opts = {}) {
+  async syncFullHistory(
+    opts: { isInitial?: boolean; respectBrowserSession?: boolean } = {}
+  ): Promise<CpeFullDump | null> {
     if (this.#syncing) return null;
     this.#syncing = true;
     try {
@@ -150,7 +146,6 @@ export class SmsPoller extends EventEmitter {
         return dump;
       }
 
-      // Check for any un-notified new inbox messages before ingesting dump
       const knownMax =
         this.stateStore.data.notifiedIndices.length > 0
           ? Math.max(...this.stateStore.data.notifiedIndices)
@@ -164,7 +159,7 @@ export class SmsPoller extends EventEmitter {
       }
 
       for (const msg of freshMessages) {
-        const enriched = {
+        const enriched: SmsMessage = {
           ...msg,
           verificationCode: extractVerificationCode(msg.content),
         };
@@ -181,13 +176,9 @@ export class SmsPoller extends EventEmitter {
     }
   }
 
-  /**
-   * Perform an incremental inbox sync to discover un-notified SMS messages.
-   *
-   * @param {{ isInitial?: boolean, respectBrowserSession?: boolean }} [opts]
-   * @returns {Promise<Array<ReturnType<import("./cpe-client.js").parseSmsMessageBlock>>>}
-   */
-  async syncOnce(opts = {}) {
+  async syncOnce(
+    opts: { isInitial?: boolean; respectBrowserSession?: boolean } = {}
+  ): Promise<SmsMessage[]> {
     if (this.#syncing) return [];
     this.#syncing = true;
     try {
@@ -248,9 +239,9 @@ export class SmsPoller extends EventEmitter {
         return [];
       }
 
-      const toMarkRead = [];
+      const toMarkRead: number[] = [];
       for (const msg of freshMessages) {
-        const enriched = {
+        const enriched: SmsMessage = {
           ...msg,
           verificationCode: extractVerificationCode(msg.content),
         };
@@ -279,10 +270,7 @@ export class SmsPoller extends EventEmitter {
     }
   }
 
-  /**
-   * @param {Record<string, unknown>} sms
-   */
-  async #postWebhook(sms) {
+  async #postWebhook(sms: SmsMessage): Promise<void> {
     await this.fetchImpl(this.webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json; charset=utf-8" },

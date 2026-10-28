@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import type { SmsModeDetection, SmsTextModeCode } from "./types.ts";
 
 /**
  * Curve25519 prime 2^255 - 19 and Montgomery constant (486662 - 2) / 4 = 121665.
@@ -14,7 +15,7 @@ import crypto from "node:crypto";
 const CURVE25519_P = (1n << 255n) - 19n;
 const CURVE25519_A24 = 121665n;
 
-const GSM_7BIT_DEFAULT_TABLE = new Set([
+const GSM_7BIT_DEFAULT_TABLE = new Set<number>([
   64, 163, 36, 165, 232, 233, 249, 236, 242, 199, 10, 216, 248, 13, 197, 229,
   916, 95, 934, 915, 923, 937, 928, 936, 931, 920, 926, 27, 198, 230, 223, 201,
   32, 33, 34, 35, 164, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
@@ -25,28 +26,29 @@ const GSM_7BIT_DEFAULT_TABLE = new Set([
   120, 121, 122, 228, 246, 241, 252, 224,
 ]);
 
-const GSM_7BIT_EXT_TABLE = new Set([10, 94, 32, 123, 125, 92, 91, 126, 93, 124, 8364]);
+const GSM_7BIT_EXT_TABLE = new Set<number>([10, 94, 32, 123, 125, 92, 91, 126, 93, 124, 8364]);
 
-export const SMS_TEXT_MODE_UCS2 = 0;
-export const SMS_TEXT_MODE_7BIT = 1;
+export const SMS_TEXT_MODE_UCS2: SmsTextModeCode = 0;
+export const SMS_TEXT_MODE_7BIT: SmsTextModeCode = 1;
 
-/**
- * Modulo over `2^255 - 19`.
- * @param {bigint} a
- * @returns {bigint}
- */
-function modP(a) {
+export interface EccSessionKeys {
+  clientPubHex: string;
+  shareKeyHex: string;
+  privateHex: string;
+}
+
+export interface ScramProof {
+  clientProofHex: string;
+  expectedServerSig: string;
+  serverKey: Buffer;
+}
+
+function modP(a: bigint): bigint {
   const r = a % CURVE25519_P;
   return r >= 0n ? r : r + CURVE25519_P;
 }
 
-/**
- * Modular exponentiation `base^exp mod (2^255 - 19)`.
- * @param {bigint} base
- * @param {bigint} exp
- * @returns {bigint}
- */
-function modPowP(base, exp) {
+function modPowP(base: bigint, exp: bigint): bigint {
   let result = 1n;
   let b = modP(base);
   let e = exp;
@@ -61,12 +63,8 @@ function modPowP(base, exp) {
 /**
  * Unclamped Montgomery ladder scalar multiplication on Curve25519, matching
  * `indutny/elliptic` `ec("curve25519")`.
- *
- * @param {bigint} scalar
- * @param {bigint} uCoord
- * @returns {bigint}
  */
-export function curve25519Mul(scalar, uCoord) {
+export function curve25519Mul(scalar: bigint, uCoord: bigint): bigint {
   if (scalar <= 0n) return 0n;
   const x1 = modP(uCoord);
   let x2 = 1n;
@@ -114,11 +112,8 @@ export function curve25519Mul(scalar, uCoord) {
 /**
  * Generate an ephemeral Curve25519 client keypair and derive the 32-byte AES-256-GCM
  * shared key against the CPE's `ecc_server_pubkey`.
- *
- * @param {string} serverPubHex 64-char hex string from `authentication_login` or `/api/webserver/publickey`
- * @returns {{ clientPubHex: string, shareKeyHex: string, privateHex: string }}
  */
-export function generateEccSession(serverPubHex) {
+export function generateEccSession(serverPubHex: string): EccSessionKeys {
   if (!serverPubHex || !/^[0-9a-fA-F]{1,64}$/.test(serverPubHex)) {
     throw new Error("Invalid CPE ECC server public key");
   }
@@ -129,17 +124,13 @@ export function generateEccSession(serverPubHex) {
 
   for (let attempt = 0; attempt < 64; attempt++) {
     const privBytes = crypto.randomBytes(32);
-    // Keep scalar below curve order (~2^252) while ensuring high entropy
-    privBytes[0] &= 0x0f;
-    privBytes[0] |= 0x08;
+    privBytes[0] = (privBytes[0]! & 0x0f) | 0x08;
     const priv = BigInt(`0x${privBytes.toString("hex")}`);
     const clientPub = curve25519Mul(priv, 9n);
     const shared = curve25519Mul(priv, serverU);
     const clientPubHex = clientPub.toString(16);
     const shareKeyHex = shared.toString(16);
 
-    // Ensure full 64-hex length (top nibble != 0) so `BN.toString("hex")` in firmware
-    // and `Buffer.from(hex, "hex")` always agree on exact 32-byte AES-256 key length.
     if (clientPubHex.length === 64 && shareKeyHex.length === 64) {
       return {
         clientPubHex,
@@ -153,18 +144,14 @@ export function generateEccSession(serverPubHex) {
 
 /**
  * Compute Huawei's non-standard SCRAM-SHA256 client proof and expected server signature.
- *
- * Note: Unlike RFC 5802, Huawei's firmware (`main.js` module 19) passes `"Client Key"`,
- * `"Server Key"`, and `authMessage` as the HMAC *key*, and the derived hashes as the HMAC *data*.
- *
- * @param {string} password
- * @param {string} saltHex
- * @param {number} iterations
- * @param {string} firstNonce
- * @param {string} serverNonce
  */
-export function computeScram(password, saltHex, iterations, firstNonce, serverNonce) {
-  // Forge's `forge.pbkdf2(password, ...)` treats JS strings as raw byte charCodes (`latin1`)
+export function computeScram(
+  password: string,
+  saltHex: string,
+  iterations: number,
+  firstNonce: string,
+  serverNonce: string
+): ScramProof {
   const pwdBytes = Buffer.from(password, "latin1");
   const saltBytes = Buffer.from(saltHex, "hex");
   const saltedPwd = crypto.pbkdf2Sync(pwdBytes, saltBytes, Number(iterations), 32, "sha256");
@@ -184,7 +171,7 @@ export function computeScram(password, saltHex, iterations, firstNonce, serverNo
 
   const clientProof = Buffer.alloc(32);
   for (let i = 0; i < 32; i++) {
-    clientProof[i] = clientKey[i] ^ clientSignature[i];
+    clientProof[i] = clientKey[i]! ^ clientSignature[i]!;
   }
 
   const expectedServerSig = crypto
@@ -202,13 +189,12 @@ export function computeScram(password, saltHex, iterations, firstNonce, serverNo
 /**
  * Verify `ecc_pubkey_signature` returned by `authentication_login` against `ServerKey`
  * to prevent MITM substitution of the ECDH public key.
- *
- * @param {string} pubkeyHex
- * @param {Buffer} serverKeyBytes
- * @param {string} expectedSignatureHex
- * @returns {boolean}
  */
-export function verifyPubkeySignature(pubkeyHex, serverKeyBytes, expectedSignatureHex) {
+export function verifyPubkeySignature(
+  pubkeyHex: string,
+  serverKeyBytes: Buffer,
+  expectedSignatureHex: string
+): boolean {
   if (!pubkeyHex || !expectedSignatureHex) return false;
   const computed = crypto
     .createHmac("sha256", serverKeyBytes)
@@ -223,13 +209,12 @@ export function verifyPubkeySignature(pubkeyHex, serverKeyBytes, expectedSignatu
  * Encrypt UTF-8 XML payload using H168-383 AES-256-GCM wire format:
  * `[8-hex uint32_le(utf8_byte_len)] + [24-hex 12B IV] + [32-hex 16B GCM Tag] + [Ciphertext Hex]`
  * with `AAD = 16 zero bytes`.
- *
- * @param {string} plainText
- * @param {string} shareKeyHex 64-char hex key
- * @param {Buffer} [ivBytes] optional 12-byte IV (for deterministic unit testing)
- * @returns {string}
  */
-export function aesGcmEncrypt(plainText, shareKeyHex, ivBytes = crypto.randomBytes(12)) {
+export function aesGcmEncrypt(
+  plainText: string,
+  shareKeyHex: string,
+  ivBytes: Buffer = crypto.randomBytes(12)
+): string {
   if (!plainText) return "";
   const key = Buffer.from(shareKeyHex, "hex");
   const utf8 = Buffer.from(plainText, "utf8");
@@ -251,12 +236,8 @@ export function aesGcmEncrypt(plainText, shareKeyHex, ivBytes = crypto.randomByt
 
 /**
  * Decrypt H168-383 AES-256-GCM hex payload back into UTF-8 XML starting at `<response>`.
- *
- * @param {string} hexPayload
- * @param {string} shareKeyHex 64-char hex key
- * @returns {string}
  */
-export function aesGcmDecrypt(hexPayload, shareKeyHex) {
+export function aesGcmDecrypt(hexPayload: string, shareKeyHex: string): string {
   const cleanHex = (hexPayload || "").trim();
   if (cleanHex.length < 64 || cleanHex.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(cleanHex)) {
     throw new Error(`Invalid AES-GCM hex payload (len=${cleanHex.length})`);
@@ -275,7 +256,7 @@ export function aesGcmDecrypt(hexPayload, shareKeyHex) {
   return respIdx >= 0 ? decoded.slice(respIdx) : decoded;
 }
 
-const XSS_ENCODE_MAP = {
+const XSS_ENCODE_MAP: Readonly<Record<string, string>> = {
   "&": "&amp;",
   "'": "&#39;",
   '"': "&quot;",
@@ -286,7 +267,7 @@ const XSS_ENCODE_MAP = {
   ")": "&#41;",
 };
 
-const XSS_DECODE_MAP = {
+const XSS_DECODE_MAP: Readonly<Record<string, string>> = {
   "&lt;": "<",
   "&gt;": ">",
   "&amp;": "&",
@@ -301,12 +282,8 @@ const XSS_DECODE_MAP = {
 
 /**
  * Encode text with Huawei WebUI's exact `xss()` escaping (`main_crypto.js` `b()`).
- * Note: `<Length>` in `/api/sms/send-sms` must equal `huaweiXssEncode(text).length`!
- *
- * @param {string} input
- * @returns {string}
  */
-export function huaweiXssEncode(input) {
+export function huaweiXssEncode(input: string | number): string {
   if (typeof input === "number") return String(input);
   if (typeof input !== "string") return "";
   return input.replace(/[&'"<>\/()]/g, (ch) => XSS_ENCODE_MAP[ch] ?? ch);
@@ -314,16 +291,13 @@ export function huaweiXssEncode(input) {
 
 /**
  * Decode Huawei XML/XSS entities back to plain text.
- *
- * @param {string} input
- * @returns {string}
  */
-export function huaweiXssDecode(input) {
+export function huaweiXssDecode(input: string): string {
   if (!input) return "";
   return input.replace(
     /(&lt;|&gt;|&amp;|&#39;|&quot;|&#x2F;|&#x2f;|&#40;|&#41;|&apos;|&#(\d+);|&#x([0-9a-fA-F]+);)/g,
-    (full, _entity, dec, hex) => {
-      if (XSS_DECODE_MAP[full]) return XSS_DECODE_MAP[full];
+    (full: string, _entity: string, dec?: string, hex?: string) => {
+      if (XSS_DECODE_MAP[full]) return XSS_DECODE_MAP[full]!;
       if (dec) return String.fromCodePoint(Number.parseInt(dec, 10));
       if (hex) return String.fromCodePoint(Number.parseInt(hex, 16));
       return full;
@@ -333,11 +307,8 @@ export function huaweiXssDecode(input) {
 
 /**
  * Strip invalid ASCII control chars except `\t`, `\n`, `\r` (`main_crypto.js`).
- *
- * @param {string} text
- * @returns {string}
  */
-export function stripInvalidControlChars(text) {
+export function stripInvalidControlChars(text: string): string {
   if (typeof text !== "string") return "";
   return text.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F]/g, "");
 }
@@ -345,11 +316,8 @@ export function stripInvalidControlChars(text) {
 /**
  * Determine Huawei `<Reserved>` SMS encoding mode (`1` = GSM 7-bit, `0` = UCS-2)
  * and estimated segment count, matching `smsSendPage.vue` (`mod_381.js`).
- *
- * @param {string} content
- * @returns {{ textMode: 0 | 1, encoding: "7BIT" | "UCS2", segments: number, charUnits: number }}
  */
-export function detectSmsTextMode(content) {
+export function detectSmsTextMode(content: string): SmsModeDetection {
   const clean = stripInvalidControlChars(content);
   let hasUcs2 = false;
   let septets = 0;
@@ -391,15 +359,10 @@ const OTP_CONTEXT_RE =
 
 /**
  * Extract likely 4-8 digit OTP / verification code from SMS content for one-tap copying.
- * Returns `null` if the SMS does not appear to contain a verification code.
- *
- * @param {string} content
- * @returns {string | null}
  */
-export function extractVerificationCode(content) {
+export function extractVerificationCode(content: string): string | null {
   if (!content || !OTP_CONTEXT_RE.test(content)) return null;
 
-  // Prefer codes immediately adjacent to keywords like `验证码：123456` or `code is 849201`
   const directPatterns = [
     /(?:验证码|校验码|动态码|确认码|随机码|认证码|登录码|passcode|otp|code)\s*(?:为|是|[:：]|is)?\s*([0-9]{4,8})(?![0-9])/i,
     /\b([0-9]{4,8})\s*(?:is your|为您的|是您的|为本次)/i,
@@ -409,7 +372,6 @@ export function extractVerificationCode(content) {
     if (m?.[1]) return m[1];
   }
 
-  // Fallback: find standalone 4-8 digit numbers excluding dates, years, times, or URLs
   const sanitized = content
     .replace(/https?:\/\/\S+/gi, " ")
     .replace(/\b20[2-3][0-9][-/.][01]?[0-9][-/.][0-3]?[0-9]\b/g, " ")

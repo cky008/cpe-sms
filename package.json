@@ -1,7 +1,17 @@
 {
   "name": "cpe-sms",
   "version": "2.0.0",
+  "private": true,
   "description": "Strict TypeScript Huawei 5G CPE Ultra 6 (H168-383) SMS gateway with SCRAM-SHA256 + Curve25519/AES-256-GCM protocol support, AES-256-GCM encrypted local storage, guided Telegram Bot, real-time daisyUI Web App, and REST/Webhook integration",
+  "author": "cky008",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cky008/cpe-sms.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cky008/cpe-sms/issues"
+  },
+  "homepage": "https://github.com/cky008/cpe-sms#readme",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -13,7 +13,7 @@ services:
       - ARCHIVE_FILE=/app/data/sms-archive.json
       - CONTACTS_FILE=/app/data/contacts.json
       - WEB_ENABLED=${WEB_ENABLED:-true}
-      - WEB_PORT=${WEB_PORT:-18383}
+      - WEB_PORT=18383
       - HTTP_PORT=${HTTP_PORT:-0}
     ports:
       - "${WEB_PORT:-18383}:18383"

@@ -1,6 +1,7 @@
 services:
-  # 主服务：CPE 短信轮询 + Telegram 机器人 + 实时网页 & REST API（统一收敛在高位端口 18383，不再占用 NAS 的 8080 端口）
+  # 主服务：CPE 短信轮询 + Telegram 机器人 + 实时网页与 REST API（默认监听高位端口 18383）
   cpe-sms:
+    image: ghcr.io/cky008/cpe-sms:latest
     build: .
     container_name: cpe-sms
     restart: unless-stopped
@@ -19,8 +20,9 @@ services:
     volumes:
       - ./data:/app/data
 
-  # 可选解耦前端代理容器：仅在需要独立启停纯前端代理时通过 `docker compose --profile web up -d` 开启
+  # 可选前端独立代理容器：通过 `docker compose --profile web up -d` 开启
   cpe-sms-web:
+    image: ghcr.io/cky008/cpe-sms:latest
     build: .
     container_name: cpe-sms-web
     profiles: ["web"]

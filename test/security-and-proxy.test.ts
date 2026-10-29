@@ -7,7 +7,12 @@ import test from "node:test";
 import { loadConfig } from "../src/config.ts";
 import { ContactStore } from "../src/contacts.ts";
 import { StorageCipher } from "../src/encrypted-file.ts";
-import { createHttpApiServer } from "../src/http-server.ts";
+import {
+  createHttpApiServer,
+  getClientIp,
+  isPrivateOrLoopbackIp,
+  isValidSameOrigin,
+} from "../src/http-server.ts";
 import { SmsArchiveStore } from "../src/sms-archive.ts";
 import { StateStore } from "../src/state-store.ts";
 
@@ -179,4 +184,167 @@ test("Repository tracks empty data/.gitkeep so Synology DSM bind mount ./data al
   const gitkeepPath = path.resolve(process.cwd(), "data", ".gitkeep");
   assert.equal(fs.existsSync(gitkeepPath), true);
   assert.equal(fs.readFileSync(gitkeepPath, "utf8"), "");
+});
+
+test("HTTP security hardening: revocable sessions, SameSite=Strict, CSRF origin check, IP spoofing defense, and minimal /healthz", async () => {
+  const fakeCpe = {
+    async getStatusSummary() {
+      return { device: { deviceName: "H168-383", marketingName: "5G CPE Ultra 6", classify: "cpe" } };
+    },
+  };
+
+  const server = createHttpApiServer({
+    cpeClient: fakeCpe as never,
+    apiToken: "portal-pass-2026",
+    serveWebUi: true,
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    // 1. /healthz minimal info disclosure
+    const healthRes = await fetch(`${baseUrl}/healthz`);
+    assert.equal(healthRes.status, 200);
+    const healthJson = (await healthRes.json()) as Record<string, unknown>;
+    assert.equal(healthJson.ok, true);
+    assert.equal(healthJson.service, "cpe-sms");
+    assert.equal(healthJson.archiveCount, undefined, "archiveCount must not be leaked on /healthz");
+    assert.equal(healthJson.timestamp, undefined, "timestamp must not be leaked on /healthz");
+
+    // 2. Login returns SameSite=Strict and a random revocable session token
+    const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "portal-pass-2026" }),
+    });
+    assert.equal(loginRes.status, 200);
+    const setCookie = loginRes.headers.get("set-cookie") ?? "";
+    assert.match(setCookie, /SameSite=Strict/i, "Session cookie must enforce SameSite=Strict");
+    const cookieHeader = setCookie.split(";")[0]!;
+    assert.match(cookieHeader, /^cpe_sms_session=[a-f0-9]{64}$/, "Session token must be a 32-byte random hex string");
+
+    // 3. Authorized request with valid cookie and same-origin Origin header
+    const checkAuth1 = await fetch(`${baseUrl}/api/auth/check`, {
+      headers: { Cookie: cookieHeader },
+    });
+    const checkAuth1Json = (await checkAuth1.json()) as { authenticated: boolean };
+    assert.equal(checkAuth1Json.authenticated, true);
+
+    // 4. CSRF protection: Mutating POST with cookie auth but cross-origin Origin header rejected with 403
+    const csrfPost = await fetch(`${baseUrl}/api/sms/preview`, {
+      method: "POST",
+      headers: {
+        Cookie: cookieHeader,
+        "Content-Type": "application/json",
+        Origin: "https://evil-attacker.example.com",
+      },
+      body: JSON.stringify({ phone: "0831234567", content: "Phishing test" }),
+    });
+    assert.equal(csrfPost.status, 403, "Cross-origin mutating POST with cookie must be rejected with 403");
+    const csrfJson = (await csrfPost.json()) as { ok: boolean; error: string };
+    assert.equal(csrfJson.ok, false);
+    assert.match(csrfJson.error, /cross-origin/i);
+
+    // 5. Same-origin mutating POST with cookie succeeds
+    const validPost = await fetch(`${baseUrl}/api/sms/preview`, {
+      method: "POST",
+      headers: {
+        Cookie: cookieHeader,
+        "Content-Type": "application/json",
+        Origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify({ phone: "0831234567", content: "Legit test" }),
+    });
+    assert.equal(validPost.status, 200);
+
+    // 6. Logout revokes the session on the server
+    const logoutRes = await fetch(`${baseUrl}/api/auth/logout`, {
+      method: "POST",
+      headers: { Cookie: cookieHeader, Origin: `http://127.0.0.1:${port}` },
+    });
+    assert.equal(logoutRes.status, 200);
+
+    // 7. Replay of old session cookie is now rejected
+    const checkAuth2 = await fetch(`${baseUrl}/api/auth/check`, {
+      headers: { Cookie: cookieHeader },
+    });
+    const checkAuth2Json = (await checkAuth2.json()) as { authenticated: boolean };
+    assert.equal(checkAuth2Json.authenticated, false, "Revoked session cookie must no longer be authenticated");
+
+    const statusAfterLogout = await fetch(`${baseUrl}/api/status`, {
+      headers: { Cookie: cookieHeader },
+    });
+    assert.equal(statusAfterLogout.status, 401, "Protected API must return 401 with revoked session cookie");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("isPrivateOrLoopbackIp accurately identifies loopback, RFC 1918, CGNAT, and rejects public IPs", () => {
+  assert.equal(isPrivateOrLoopbackIp("127.0.0.1"), true);
+  assert.equal(isPrivateOrLoopbackIp("::1"), true);
+  assert.equal(isPrivateOrLoopbackIp("::ffff:127.0.0.1"), true);
+  assert.equal(isPrivateOrLoopbackIp("192.168.1.1"), true);
+  assert.equal(isPrivateOrLoopbackIp("10.0.0.1"), true);
+  assert.equal(isPrivateOrLoopbackIp("172.16.0.1"), true);
+  assert.equal(isPrivateOrLoopbackIp("172.31.255.254"), true);
+  assert.equal(isPrivateOrLoopbackIp("100.64.0.1"), true); // Tailscale / CGNAT
+  assert.equal(isPrivateOrLoopbackIp("100.127.255.254"), true);
+
+  // Public internet IPs must return false
+  assert.equal(isPrivateOrLoopbackIp("8.8.8.8"), false);
+  assert.equal(isPrivateOrLoopbackIp("203.0.113.195"), false);
+  assert.equal(isPrivateOrLoopbackIp("172.32.0.1"), false);
+  assert.equal(isPrivateOrLoopbackIp("100.128.0.1"), false);
+});
+
+test("getClientIp ignores spoofed X-Forwarded-For on public direct connections and selects rightmost proxy IP", () => {
+  // Direct public internet connection: attacker cannot spoof X-Forwarded-For
+  const publicReq = {
+    socket: { remoteAddress: "203.0.113.50" },
+    headers: { "x-forwarded-for": "1.2.3.4" },
+  } as unknown as import("node:http").IncomingMessage;
+  assert.equal(getClientIp(publicReq), "203.0.113.50");
+
+  // Local reverse proxy: trust the rightmost client IP recorded in the forwarded chain
+  const proxiedReq = {
+    socket: { remoteAddress: "127.0.0.1" },
+    headers: { "x-forwarded-for": "1.2.3.4, 198.51.100.22" },
+  } as unknown as import("node:http").IncomingMessage;
+  assert.equal(getClientIp(proxiedReq), "198.51.100.22");
+
+  // Single forwarded IP through local proxy
+  const singleProxiedReq = {
+    socket: { remoteAddress: "127.0.0.1" },
+    headers: { "x-forwarded-for": "100.64.0.15" },
+  } as unknown as import("node:http").IncomingMessage;
+  assert.equal(getClientIp(singleProxiedReq), "100.64.0.15");
+});
+
+test("isValidSameOrigin validates Origin and Referer against Host / X-Forwarded-Host", () => {
+  const matchingOrigin = {
+    headers: { host: "sms.example.com", origin: "https://sms.example.com" },
+  } as unknown as import("node:http").IncomingMessage;
+  assert.equal(isValidSameOrigin(matchingOrigin), true);
+
+  const evilOrigin = {
+    headers: { host: "sms.example.com", origin: "https://evil-attacker.example.com" },
+  } as unknown as import("node:http").IncomingMessage;
+  assert.equal(isValidSameOrigin(evilOrigin), false);
+
+  const xForwardedHostMatch = {
+    headers: {
+      host: "127.0.0.1:18383",
+      "x-forwarded-host": "sms.example.com",
+      origin: "https://sms.example.com",
+    },
+  } as unknown as import("node:http").IncomingMessage;
+  assert.equal(isValidSameOrigin(xForwardedHostMatch), true);
+
+  const evilReferer = {
+    headers: { host: "sms.example.com", referer: "https://evil.com/phish" },
+  } as unknown as import("node:http").IncomingMessage;
+  assert.equal(isValidSameOrigin(evilReferer), false);
 });

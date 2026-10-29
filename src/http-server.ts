@@ -28,11 +28,81 @@ const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   "Referrer-Policy": "no-referrer",
 };
 
-function makeSessionSignature(secret: string): string {
-  return crypto
-    .createHmac("sha256", Buffer.from(secret, "utf8"))
-    .update("cpe-sms-webui-session-v1")
-    .digest("hex");
+export function isPrivateOrLoopbackIp(ip: string): boolean {
+  if (!ip) return false;
+  const cleanIp = ip.startsWith("::ffff:") ? ip.slice(7) : ip;
+  if (cleanIp === "127.0.0.1" || cleanIp === "::1" || cleanIp === "localhost") return true;
+
+  // RFC 1918 Private IPv4
+  if (cleanIp.startsWith("10.") || cleanIp.startsWith("192.168.")) return true;
+  const m172 = cleanIp.match(/^172\.(\d+)\./);
+  if (m172) {
+    const octet = Number.parseInt(m172[1]!, 10);
+    if (octet >= 16 && octet <= 31) return true;
+  }
+
+  // Carrier-grade NAT (Tailscale / RFC 6598: 100.64.0.0/10)
+  const m100 = cleanIp.match(/^100\.(\d+)\./);
+  if (m100) {
+    const octet = Number.parseInt(m100[1]!, 10);
+    if (octet >= 64 && octet <= 127) return true;
+  }
+
+  // IPv6 ULA (fc00::/7) or Link-Local (fe80::/10)
+  if (cleanIp.startsWith("fc") || cleanIp.startsWith("fd") || cleanIp.startsWith("fe80")) return true;
+
+  return false;
+}
+
+export function getClientIp(req: http.IncomingMessage, trustProxy = true): string {
+  const remoteIp = req.socket?.remoteAddress ?? "unknown";
+  const cleanRemote = remoteIp.startsWith("::ffff:") ? remoteIp.slice(7) : remoteIp;
+
+  if (!trustProxy || !isPrivateOrLoopbackIp(cleanRemote)) {
+    return cleanRemote;
+  }
+
+  const xff = req.headers["x-forwarded-for"];
+  const xffStr = Array.isArray(xff) ? xff[0] : xff;
+  if (xffStr) {
+    const ips = xffStr.split(",").map((s) => s.trim()).filter(Boolean);
+    if (ips.length > 0) {
+      return ips[ips.length - 1]!;
+    }
+  }
+
+  return cleanRemote;
+}
+
+export function isValidSameOrigin(req: http.IncomingMessage): boolean {
+  const origin = req.headers.origin;
+  const referer = req.headers.referer;
+  const xfHost = req.headers["x-forwarded-host"];
+  const rawHost = xfHost ?? req.headers.host;
+  const hostStr = Array.isArray(rawHost) ? rawHost[0] : rawHost;
+  if (!hostStr) return true;
+
+  const targetHost = hostStr.trim().toLowerCase();
+
+  if (origin) {
+    try {
+      const parsedOrigin = new URL(origin);
+      return parsedOrigin.host.toLowerCase() === targetHost;
+    } catch {
+      return false;
+    }
+  }
+
+  if (referer) {
+    try {
+      const parsedReferer = new URL(referer);
+      return parsedReferer.host.toLowerCase() === targetHost;
+    } catch {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function parseCookies(cookieHeader: string | undefined): Record<string, string> {
@@ -61,38 +131,6 @@ function isRequestHttps(req: http.IncomingMessage): boolean {
     return true;
   }
   return Boolean((req.socket as { encrypted?: boolean }).encrypted);
-}
-
-function getClientIp(req: http.IncomingMessage): string {
-  const xff = req.headers["x-forwarded-for"];
-  const xffStr = Array.isArray(xff) ? xff[0] : xff;
-  if (xffStr) {
-    const first = xffStr.split(",")[0]?.trim();
-    if (first) return first;
-  }
-  return req.socket.remoteAddress ?? "unknown";
-}
-
-function isRequestAuthorized(req: http.IncomingMessage, expectedToken: string): boolean {
-  if (!expectedToken) return false;
-
-  const authHeader = req.headers.authorization ?? "";
-  if (authHeader.toLowerCase().startsWith("bearer ")) {
-    const provided = authHeader.slice(7).trim();
-    if (timingSafeEqualStr(provided, expectedToken)) return true;
-  }
-  const xToken = req.headers["x-api-token"];
-  if (typeof xToken === "string" && timingSafeEqualStr(xToken.trim(), expectedToken)) {
-    return true;
-  }
-
-  const cookies = parseCookies(req.headers.cookie);
-  const cookieSig = cookies[SESSION_COOKIE_NAME];
-  if (cookieSig && timingSafeEqualStr(cookieSig, makeSessionSignature(expectedToken))) {
-    return true;
-  }
-
-  return false;
 }
 
 function readJsonBody(
@@ -205,6 +243,41 @@ export function createHttpApiServer(deps: HttpApiServerDeps): http.Server {
   const sseClients = new Set<http.ServerResponse>();
   const loginFailures = new Map<string, { count: number; resetAt: number }>();
 
+  interface SessionRecord {
+    createdAt: number;
+    expiresAt: number;
+    clientIp: string;
+  }
+  const activeSessions = new Map<string, SessionRecord>();
+
+  const checkAuthorization = (req: http.IncomingMessage): { authorized: boolean; viaCookie: boolean } => {
+    if (!apiToken) return { authorized: false, viaCookie: false };
+
+    const authHeader = req.headers.authorization ?? "";
+    if (authHeader.toLowerCase().startsWith("bearer ")) {
+      const provided = authHeader.slice(7).trim();
+      if (timingSafeEqualStr(provided, apiToken)) return { authorized: true, viaCookie: false };
+    }
+    const xToken = req.headers["x-api-token"];
+    if (typeof xToken === "string" && timingSafeEqualStr(xToken.trim(), apiToken)) {
+      return { authorized: true, viaCookie: false };
+    }
+
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionId = cookies[SESSION_COOKIE_NAME];
+    if (sessionId) {
+      const session = activeSessions.get(sessionId);
+      if (session) {
+        if (Date.now() <= session.expiresAt) {
+          return { authorized: true, viaCookie: true };
+        }
+        activeSessions.delete(sessionId);
+      }
+    }
+
+    return { authorized: false, viaCookie: false };
+  };
+
   const isIpRateLimited = (ip: string): boolean => {
     const entry = loginFailures.get(ip);
     if (!entry) return false;
@@ -249,6 +322,10 @@ export function createHttpApiServer(deps: HttpApiServerDeps): http.Server {
   }
 
   const heartbeatInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [id, s] of activeSessions) {
+      if (now > s.expiresAt) activeSessions.delete(id);
+    }
     for (const client of sseClients) {
       try {
         client.write(": ping\n\n");
@@ -269,9 +346,6 @@ export function createHttpApiServer(deps: HttpApiServerDeps): http.Server {
         sendJson(res, 200, {
           ok: true,
           service: "cpe-sms",
-          webUi: serveWebUi,
-          archiveCount: archiveStore?.messages.size ?? 0,
-          timestamp: new Date().toISOString(),
         });
         return;
       }
@@ -281,15 +355,21 @@ export function createHttpApiServer(deps: HttpApiServerDeps): http.Server {
       }
 
       if (method === "GET" && pathname === "/api/auth/check") {
+        const auth = checkAuthorization(req);
         sendJson(res, 200, {
           ok: true,
-          authenticated: isRequestAuthorized(req, apiToken),
+          authenticated: auth.authorized,
           defaultCountryCode,
         });
         return;
       }
 
       if (method === "POST" && pathname === "/api/auth/login") {
+        if (!isValidSameOrigin(req)) {
+          sendJson(res, 403, { ok: false, error: "Forbidden: Cross-origin request rejected" });
+          return;
+        }
+
         const clientIp = getClientIp(req);
         if (isIpRateLimited(clientIp)) {
           sendJson(res, 429, {
@@ -308,36 +388,59 @@ export function createHttpApiServer(deps: HttpApiServerDeps): http.Server {
         }
 
         loginFailures.delete(clientIp);
-        const sig = makeSessionSignature(apiToken);
+        const sessionId = crypto.randomBytes(32).toString("hex");
         const maxAge = 30 * 24 * 3600;
+        activeSessions.set(sessionId, {
+          createdAt: Date.now(),
+          expiresAt: Date.now() + maxAge * 1000,
+          clientIp,
+        });
         const secureAttr = isRequestHttps(req) ? "; Secure" : "";
         sendJson(
           res,
           200,
           { ok: true, defaultCountryCode },
           {
-            "Set-Cookie": `${SESSION_COOKIE_NAME}=${sig}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secureAttr}`,
+            "Set-Cookie": `${SESSION_COOKIE_NAME}=${sessionId}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Strict${secureAttr}`,
           }
         );
         return;
       }
 
       if (method === "POST" && pathname === "/api/auth/logout") {
+        if (!isValidSameOrigin(req)) {
+          sendJson(res, 403, { ok: false, error: "Forbidden: Cross-origin request rejected" });
+          return;
+        }
+
+        const cookies = parseCookies(req.headers.cookie);
+        const sessionId = cookies[SESSION_COOKIE_NAME];
+        if (sessionId) {
+          activeSessions.delete(sessionId);
+        }
         const secureAttr = isRequestHttps(req) ? "; Secure" : "";
         sendJson(
           res,
           200,
           { ok: true },
           {
-            "Set-Cookie": `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secureAttr}`,
+            "Set-Cookie": `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict${secureAttr}`,
           }
         );
         return;
       }
 
-      if (!isRequestAuthorized(req, apiToken)) {
+      const auth = checkAuthorization(req);
+      if (!auth.authorized) {
         sendJson(res, 401, { ok: false, error: "Unauthorized: valid Bearer token or login required" });
         return;
+      }
+
+      if (auth.viaCookie && (method === "POST" || method === "PUT" || method === "DELETE" || method === "PATCH")) {
+        if (!isValidSameOrigin(req)) {
+          sendJson(res, 403, { ok: false, error: "Forbidden: Cross-origin request rejected" });
+          return;
+        }
       }
 
       if (method === "GET" && pathname === "/api/events") {

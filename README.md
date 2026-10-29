@@ -5,6 +5,10 @@
 </p>
 
 <p align="center">
+  <strong>简体中文</strong> | <a href="README_EN.md">English</a>
+</p>
+
+<p align="center">
   <a href="https://github.com/cky008/cpe-sms/actions/workflows/ci.yml">
     <img src="https://img.shields.io/github/actions/workflow/status/cky008/cpe-sms/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white" alt="CI Status" />
   </a>
@@ -59,6 +63,7 @@
 - [CLI 命令行工具](#-cli-命令行工具)
 - [配置说明](#-配置说明)
 - [工程规范与测试门禁](#-工程规范与测试门禁)
+- [免责声明](#-免责声明-disclaimer)
 - [开源许可证](#-开源许可证)
 
 ---
@@ -295,6 +300,15 @@ npm run build && npm run check
 项目配置了 [GitHub Actions CI](.github/workflows/ci.yml)，在每次代码推送到 `main` 分支或提交 Pull Request 时自动运行：
 - **测试与门禁作业**：在 Ubuntu 环境基于 Node.js 22 执行依赖安装、资源编译及全量门禁检查。
 - **容器镜像构建作业**：基于 `Dockerfile` 执行多阶段容器构建冒烟验证，确保发布产物零依赖且可重现。
+
+---
+
+## ⚠️ 免责声明 (Disclaimer)
+
+1. **用途限制**：本项目仅供合法持有华为 5G CPE Ultra 6 (`H168-383`) 设备管理权限的个人用户用于家庭网络自动化、私有短信归档与自用研究学习。
+2. **禁止滥用**：严禁将本软件用于任何垃圾短信轰炸 (SMS Bombing / Spamming)、未授权批量营销、电信诈骗、未授权渗透测试或违反所在地电信法律法规的非法活动。
+3. **网络安全警示**：请勿将未鉴权或未配置 HTTPS 反向代理的容器端口直接裸露暴露于公网（Internet）。强烈建议通过 Tailscale / WireGuard 等加密内网访问，或配置具有强密码与 HSTS 的反向代理。
+4. **非官方声明**：本项目属于独立个人开源项目，与华为技术有限公司（Huawei Technologies Co., Ltd.）或任何电信运营商无官方关联、赞助或背书关系。开发者不对任何因使用、修改或衍生本软件造成的硬件故障、账户锁定或数据损坏承担法律责任。
 
 ---
 

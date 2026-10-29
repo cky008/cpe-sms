@@ -1,20 +1,971 @@
 @import "tailwindcss";
+
+/*
+ * Sujian (素笺) — a quiet, paper-like minimal design system for the H168-383 SMS Center (daisyUI v5).
+ * - Four curated base themes (sujian-light / sujian-dark / sujian-paper / sujian-midnight)
+ *   with a layered surface luminance hierarchy (`base-200` sidebar, `base-100` canvas,
+ *   and `--surface-elevated` floating cards & modals).
+ * - Independent accent colour layer (`html[data-accent="..."]`) with light & dark curves
+ *   so every base theme pairs cleanly with every accent colour.
+ */
 @plugin "daisyui" {
-  themes: light --default, dark --prefersdark, nord, emerald, dim, cupcake;
+  themes: false;
 }
 
-/* Smooth custom scrollbars for thread list and message view */
+@plugin "daisyui/theme" {
+  name: "sujian-light";
+  default: true;
+  color-scheme: light;
+  --color-base-100: oklch(100% 0 0);
+  --color-base-200: oklch(97.2% 0.003 265);
+  --color-base-300: oklch(92.4% 0.005 265);
+  --color-base-content: oklch(22.5% 0.008 265);
+  --color-primary: oklch(60.5% 0.2 257);
+  --color-primary-content: oklch(100% 0 0);
+  --color-secondary: oklch(58% 0.19 295);
+  --color-secondary-content: oklch(100% 0 0);
+  --color-accent: oklch(76% 0.16 75);
+  --color-accent-content: oklch(25% 0.05 75);
+  --color-neutral: oklch(26% 0.008 265);
+  --color-neutral-content: oklch(98% 0.002 265);
+  --color-info: oklch(62% 0.17 245);
+  --color-info-content: oklch(100% 0 0);
+  --color-success: oklch(64% 0.16 152);
+  --color-success-content: oklch(100% 0 0);
+  --color-warning: oklch(75% 0.16 72);
+  --color-warning-content: oklch(25% 0.05 72);
+  --color-error: oklch(61% 0.21 25);
+  --color-error-content: oklch(100% 0 0);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.625rem;
+  --radius-box: 1rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+@plugin "daisyui/theme" {
+  name: "sujian-dark";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-base-100: oklch(21.4% 0.004 285);
+  --color-base-200: oklch(17.8% 0.004 285);
+  --color-base-300: oklch(29% 0.006 285);
+  --color-base-content: oklch(93.5% 0.003 285);
+  --color-primary: oklch(67% 0.17 255);
+  --color-primary-content: oklch(100% 0 0);
+  --color-secondary: oklch(70% 0.16 295);
+  --color-secondary-content: oklch(18% 0.03 295);
+  --color-accent: oklch(80% 0.15 75);
+  --color-accent-content: oklch(25% 0.05 75);
+  --color-neutral: oklch(31% 0.006 285);
+  --color-neutral-content: oklch(96% 0.002 285);
+  --color-info: oklch(70% 0.14 245);
+  --color-info-content: oklch(20% 0.03 245);
+  --color-success: oklch(72% 0.15 152);
+  --color-success-content: oklch(20% 0.03 152);
+  --color-warning: oklch(80% 0.15 75);
+  --color-warning-content: oklch(22% 0.04 75);
+  --color-error: oklch(68% 0.19 25);
+  --color-error-content: oklch(100% 0 0);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.625rem;
+  --radius-box: 1rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+@plugin "daisyui/theme" {
+  name: "sujian-paper";
+  color-scheme: light;
+  --color-base-100: oklch(98.8% 0.007 85);
+  --color-base-200: oklch(95.4% 0.014 82);
+  --color-base-300: oklch(90.2% 0.02 80);
+  --color-base-content: oklch(30% 0.024 60);
+  --color-primary: oklch(59% 0.155 42);
+  --color-primary-content: oklch(100% 0 0);
+  --color-secondary: oklch(56% 0.12 290);
+  --color-secondary-content: oklch(100% 0 0);
+  --color-accent: oklch(72% 0.13 80);
+  --color-accent-content: oklch(28% 0.04 80);
+  --color-neutral: oklch(32% 0.025 60);
+  --color-neutral-content: oklch(97% 0.01 85);
+  --color-info: oklch(60% 0.12 240);
+  --color-info-content: oklch(100% 0 0);
+  --color-success: oklch(61% 0.14 152);
+  --color-success-content: oklch(100% 0 0);
+  --color-warning: oklch(74% 0.15 70);
+  --color-warning-content: oklch(28% 0.05 70);
+  --color-error: oklch(58% 0.19 28);
+  --color-error-content: oklch(100% 0 0);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.625rem;
+  --radius-box: 1rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+@plugin "daisyui/theme" {
+  name: "sujian-midnight";
+  color-scheme: dark;
+  --color-base-100: oklch(19% 0.022 266);
+  --color-base-200: oklch(15.2% 0.02 266);
+  --color-base-300: oklch(27% 0.028 266);
+  --color-base-content: oklch(92% 0.012 266);
+  --color-primary: oklch(71% 0.135 222);
+  --color-primary-content: oklch(16% 0.03 222);
+  --color-secondary: oklch(71% 0.15 298);
+  --color-secondary-content: oklch(18% 0.03 298);
+  --color-accent: oklch(80% 0.14 80);
+  --color-accent-content: oklch(22% 0.04 80);
+  --color-neutral: oklch(29% 0.028 266);
+  --color-neutral-content: oklch(95% 0.01 266);
+  --color-info: oklch(72% 0.13 230);
+  --color-info-content: oklch(18% 0.03 230);
+  --color-success: oklch(74% 0.14 155);
+  --color-success-content: oklch(18% 0.03 155);
+  --color-warning: oklch(80% 0.14 80);
+  --color-warning-content: oklch(20% 0.04 80);
+  --color-error: oklch(68% 0.18 22);
+  --color-error-content: oklch(100% 0 0);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.625rem;
+  --radius-box: 1rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+/* ---------- Elevated Surface Tokens per Base Theme ---------- */
+:root,
+[data-theme="sujian-light"] {
+  --surface-elevated: oklch(100% 0 0);
+}
+[data-theme="sujian-paper"] {
+  --surface-elevated: oklch(99.6% 0.004 85);
+}
+[data-theme="sujian-dark"] {
+  --surface-elevated: oklch(25.2% 0.005 285);
+}
+[data-theme="sujian-midnight"] {
+  --surface-elevated: oklch(23.2% 0.026 266);
+}
+
+/* ---------- Accent Colours (Light + Dark Adaptive Curves) ---------- */
+:root[data-accent="blue"],
+:root[data-accent="blue"] [data-theme] {
+  --color-primary: oklch(60.5% 0.2 257);
+  --color-primary-content: oklch(100% 0 0);
+}
+:root[data-accent="blue"]:is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]),
+:root[data-accent="blue"] :is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]) {
+  --color-primary: oklch(66.5% 0.175 255);
+  --color-primary-content: oklch(100% 0 0);
+}
+
+:root[data-accent="indigo"],
+:root[data-accent="indigo"] [data-theme] {
+  --color-primary: oklch(56% 0.21 277);
+  --color-primary-content: oklch(100% 0 0);
+}
+:root[data-accent="indigo"]:is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]),
+:root[data-accent="indigo"] :is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]) {
+  --color-primary: oklch(67% 0.175 277);
+  --color-primary-content: oklch(100% 0 0);
+}
+
+:root[data-accent="purple"],
+:root[data-accent="purple"] [data-theme] {
+  --color-primary: oklch(58% 0.205 305);
+  --color-primary-content: oklch(100% 0 0);
+}
+:root[data-accent="purple"]:is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]),
+:root[data-accent="purple"] :is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]) {
+  --color-primary: oklch(68.5% 0.175 305);
+  --color-primary-content: oklch(100% 0 0);
+}
+
+:root[data-accent="pink"],
+:root[data-accent="pink"] [data-theme] {
+  --color-primary: oklch(62% 0.205 355);
+  --color-primary-content: oklch(100% 0 0);
+}
+:root[data-accent="pink"]:is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]),
+:root[data-accent="pink"] :is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]) {
+  --color-primary: oklch(69% 0.18 355);
+  --color-primary-content: oklch(100% 0 0);
+}
+
+:root[data-accent="red"],
+:root[data-accent="red"] [data-theme] {
+  --color-primary: oklch(59.5% 0.21 25);
+  --color-primary-content: oklch(100% 0 0);
+}
+:root[data-accent="red"]:is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]),
+:root[data-accent="red"] :is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]) {
+  --color-primary: oklch(67% 0.19 25);
+  --color-primary-content: oklch(100% 0 0);
+}
+
+:root[data-accent="orange"],
+:root[data-accent="orange"] [data-theme] {
+  --color-primary: oklch(65% 0.18 48);
+  --color-primary-content: oklch(100% 0 0);
+}
+:root[data-accent="orange"]:is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]),
+:root[data-accent="orange"] :is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]) {
+  --color-primary: oklch(71% 0.165 52);
+  --color-primary-content: oklch(18% 0.04 52);
+}
+
+:root[data-accent="green"],
+:root[data-accent="green"] [data-theme] {
+  --color-primary: oklch(60.5% 0.155 155);
+  --color-primary-content: oklch(100% 0 0);
+}
+:root[data-accent="green"]:is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]),
+:root[data-accent="green"] :is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]) {
+  --color-primary: oklch(69% 0.15 155);
+  --color-primary-content: oklch(16% 0.03 155);
+}
+
+:root[data-accent="teal"],
+:root[data-accent="teal"] [data-theme] {
+  --color-primary: oklch(60% 0.125 202);
+  --color-primary-content: oklch(100% 0 0);
+}
+:root[data-accent="teal"]:is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]),
+:root[data-accent="teal"] :is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]) {
+  --color-primary: oklch(70% 0.125 202);
+  --color-primary-content: oklch(16% 0.03 202);
+}
+
+:root[data-accent="graphite"],
+:root[data-accent="graphite"] [data-theme] {
+  --color-primary: oklch(42% 0.01 270);
+  --color-primary-content: oklch(100% 0 0);
+}
+:root[data-accent="graphite"]:is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]),
+:root[data-accent="graphite"] :is([data-theme="sujian-dark"], [data-theme="sujian-midnight"]) {
+  --color-primary: oklch(78% 0.008 270);
+  --color-primary-content: oklch(18% 0.01 270);
+}
+
+/* ---------- Base ---------- */
+html,
+body {
+  font-feature-settings: "cv11", "ss01";
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-primary) 22%, transparent);
+}
+
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: color-mix(in oklab, var(--color-base-content) 18%, transparent);
+  background: color-mix(in oklab, var(--color-base-content) 14%, transparent);
   border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in oklab, var(--color-base-content) 32%, transparent);
+  background: color-mix(in oklab, var(--color-base-content) 26%, transparent);
+  background-clip: padding-box;
+}
+
+/* Mobile single-pane navigation (list <-> conversation) */
+@media (max-width: 767.98px) {
+  [data-mobile-view="chat"] #listPane {
+    display: none;
+  }
+  [data-mobile-view="list"] #chatPane {
+    display: none;
+  }
+}
+
+/* ---------- Components ---------- */
+@layer components {
+  .ico {
+    width: 1em;
+    height: 1em;
+    flex-shrink: 0;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.75;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .muted {
+    color: color-mix(in oklab, var(--color-base-content) 50%, transparent);
+  }
+
+  .elevated-card {
+    background: var(--surface-elevated);
+    border: 1px solid color-mix(in oklab, var(--color-base-content) 8%, transparent);
+    box-shadow:
+      0 1px 2px color-mix(in oklab, black 5%, transparent),
+      0 12px 32px -16px color-mix(in oklab, black 22%, transparent);
+  }
+
+  .sidebar-card {
+    background: var(--surface-elevated);
+    border: 1px solid color-mix(in oklab, var(--color-base-content) 7%, transparent);
+    box-shadow: 0 1px 2px color-mix(in oklab, black 4%, transparent);
+  }
+
+  .modal-box {
+    background: var(--surface-elevated);
+    border: 1px solid color-mix(in oklab, var(--color-base-content) 9%, transparent);
+    box-shadow:
+      0 24px 56px -16px color-mix(in oklab, black 45%, transparent),
+      0 2px 8px color-mix(in oklab, black 12%, transparent);
+  }
+
+  /* Keep workspace undimmed when live-previewing themes and accent colours */
+  #appearanceModal::backdrop,
+  #appearanceModal .modal-backdrop {
+    background: color-mix(in oklab, black 10%, transparent);
+  }
+
+  /* Soft search / text field (borderless until focused) */
+  .field-soft {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    height: 2.25rem;
+    padding-inline: 0.75rem;
+    border-radius: 0.625rem;
+    font-size: 0.875rem;
+    background: color-mix(in oklab, var(--color-base-content) 5.5%, transparent);
+    transition:
+      background-color 0.2s ease,
+      box-shadow 0.2s ease;
+  }
+  .field-soft:focus-within {
+    background: var(--surface-elevated);
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--color-primary) 55%, transparent),
+      0 0 0 4px color-mix(in oklab, var(--color-primary) 14%, transparent);
+  }
+  .field-soft input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+  }
+  .field-soft input::placeholder {
+    color: color-mix(in oklab, var(--color-base-content) 40%, transparent);
+  }
+  .field-soft > .ico {
+    color: color-mix(in oklab, var(--color-base-content) 42%, transparent);
+  }
+
+  /* Seamless borderless recipient line inside New Message sheet */
+  .recipient-bar {
+    border-bottom: 1px solid color-mix(in oklab, var(--color-base-content) 8%, transparent);
+    transition: border-color 0.2s ease;
+  }
+  .recipient-bar:focus-within {
+    border-bottom-color: color-mix(in oklab, var(--color-primary) 55%, transparent);
+  }
+  .bare-select {
+    appearance: none;
+    border: 0;
+    outline: none;
+    background: color-mix(in oklab, var(--color-base-content) 6%, transparent);
+    border-radius: 0.5rem;
+    padding: 0.25rem 0.625rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: color-mix(in oklab, var(--color-base-content) 82%, transparent);
+    cursor: pointer;
+    transition: background-color 0.18s ease;
+  }
+  .bare-select:hover,
+  .bare-select:focus {
+    background: color-mix(in oklab, var(--color-primary) 14%, transparent);
+    color: var(--color-primary);
+  }
+  .bare-input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+    padding: 0.375rem 0.25rem;
+    font-size: 0.9375rem;
+    color: var(--color-base-content);
+  }
+  .bare-input::placeholder {
+    color: color-mix(in oklab, var(--color-base-content) 38%, transparent);
+  }
+
+  /* Sidebar navigation */
+  .nav-item {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.4375rem 0.625rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    text-align: left;
+    color: color-mix(in oklab, var(--color-base-content) 82%, transparent);
+    transition:
+      background-color 0.18s ease,
+      color 0.18s ease,
+      transform 0.12s ease;
+    cursor: pointer;
+  }
+  .nav-item:hover {
+    background: color-mix(in oklab, var(--color-base-content) 5.5%, transparent);
+  }
+  .nav-item:active {
+    transform: scale(0.985);
+  }
+  .nav-item.is-active {
+    background: color-mix(in oklab, var(--color-base-content) 9.5%, transparent);
+    color: var(--color-base-content);
+    font-weight: 600;
+  }
+  .nav-item .ico {
+    font-size: 1.0625rem;
+  }
+  .nav-item .count {
+    margin-left: auto;
+    font-size: 0.75rem;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    color: color-mix(in oklab, var(--color-base-content) 42%, transparent);
+  }
+
+  /* Thread list */
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin: 1.125rem 0.75rem 0.375rem;
+    padding-bottom: 0.375rem;
+    font-size: 0.8125rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    border-bottom: 1px solid color-mix(in oklab, var(--color-base-content) 8%, transparent);
+  }
+  .section-head:first-child {
+    margin-top: 0.25rem;
+  }
+  .thread-row {
+    display: flex;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.625rem 0.75rem;
+    border-radius: 0.875rem;
+    text-align: left;
+    cursor: pointer;
+    outline: none;
+    transition:
+      background-color 0.18s ease,
+      transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .thread-row:hover {
+    background: color-mix(in oklab, var(--color-base-content) 4.5%, transparent);
+  }
+  .thread-row:focus-visible {
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-primary) 45%, transparent);
+  }
+  .thread-row:active {
+    transform: scale(0.99);
+  }
+  .thread-row.is-active {
+    background: color-mix(in oklab, var(--color-primary) 12%, transparent);
+  }
+
+  .avatar-ph {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    border-radius: 9999px;
+    font-weight: 600;
+    user-select: none;
+    background: color-mix(in oklab, var(--color-base-content) 7%, transparent);
+    color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+    transition:
+      background-color 0.2s ease,
+      color 0.2s ease;
+  }
+  .avatar-ph.is-brand {
+    border-radius: 32%;
+  }
+  .thread-row.is-active .avatar-ph,
+  .avatar-ph.is-accent {
+    background: color-mix(in oklab, var(--color-primary) 16%, transparent);
+    color: var(--color-primary);
+  }
+
+  .unread-dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 9999px;
+    background: var(--color-primary);
+    flex-shrink: 0;
+  }
+
+  /* OTP chip */
+  .otp-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.1875rem 0.5rem;
+    border-radius: 0.5rem;
+    font-size: 0.75rem;
+    border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
+    background: var(--surface-elevated);
+    color: color-mix(in oklab, var(--color-base-content) 75%, transparent);
+    transition:
+      border-color 0.18s ease,
+      color 0.18s ease,
+      background-color 0.18s ease,
+      transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+    cursor: pointer;
+  }
+  .otp-chip:hover {
+    border-color: color-mix(in oklab, var(--color-primary) 50%, transparent);
+    color: var(--color-primary);
+  }
+  .otp-chip:active {
+    transform: scale(0.95);
+  }
+  .otp-chip .code {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    letter-spacing: 0.13em;
+    color: var(--color-base-content);
+  }
+  .otp-chip.is-copied {
+    border-color: color-mix(in oklab, var(--color-success) 60%, transparent);
+    color: var(--color-success);
+  }
+
+  /* Conversation bubbles */
+  .bubble {
+    padding: 0.5rem 0.875rem;
+    border-radius: 1.125rem;
+    font-size: 0.9375rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .bubble-in {
+    background: color-mix(in oklab, var(--color-base-content) 7%, transparent);
+    color: var(--color-base-content);
+  }
+  .bubble-out {
+    background: var(--color-primary);
+    color: var(--color-primary-content);
+  }
+  .bubble a {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .bubble-in.join-top {
+    border-top-left-radius: 0.375rem;
+  }
+  .bubble-in.join-bottom {
+    border-bottom-left-radius: 0.375rem;
+  }
+  .bubble-out.join-top {
+    border-top-right-radius: 0.375rem;
+  }
+  .bubble-out.join-bottom {
+    border-bottom-right-radius: 0.375rem;
+  }
+
+  .day-sep {
+    display: flex;
+    justify-content: center;
+    margin: 1.5rem 0 0.75rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: color-mix(in oklab, var(--color-base-content) 42%, transparent);
+  }
+
+  /* Composer card */
+  .composer {
+    border-radius: 1.25rem;
+    border: 1px solid color-mix(in oklab, var(--color-base-content) 11%, transparent);
+    background: var(--surface-elevated);
+    box-shadow: 0 1px 2px color-mix(in oklab, black 4%, transparent);
+    transition:
+      border-color 0.2s ease,
+      box-shadow 0.25s ease;
+  }
+  .composer:focus-within {
+    border-color: color-mix(in oklab, var(--color-primary) 48%, transparent);
+    box-shadow:
+      0 0 0 4px color-mix(in oklab, var(--color-primary) 11%, transparent),
+      0 8px 24px -12px color-mix(in oklab, black 25%, transparent);
+  }
+  .composer textarea {
+    display: block;
+    width: 100%;
+    resize: none;
+    border: 0;
+    outline: none;
+    background: transparent;
+    padding: 0.75rem 1rem 0.25rem;
+    font-size: 0.9375rem;
+    line-height: 1.45;
+    max-height: 10rem;
+  }
+  .composer textarea::placeholder {
+    color: color-mix(in oklab, var(--color-base-content) 38%, transparent);
+  }
+
+  /* Floating quick-compose button */
+  .fab-compose {
+    box-shadow:
+      0 10px 24px -8px color-mix(in oklab, var(--color-primary) 70%, transparent),
+      0 2px 6px color-mix(in oklab, black 14%, transparent);
+    transition:
+      transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1),
+      box-shadow 0.25s ease;
+  }
+  .fab-compose .ico {
+    transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .fab-compose:hover {
+    transform: translateY(-2px) scale(1.06);
+  }
+  .fab-compose:hover .ico {
+    transform: rotate(90deg);
+  }
+  .fab-compose:active {
+    transform: scale(0.92);
+  }
+
+  /* Live connection dot */
+  .live-dot {
+    position: relative;
+    width: 0.4375rem;
+    height: 0.4375rem;
+    border-radius: 9999px;
+    background: var(--color-warning);
+    transition: background-color 0.3s ease;
+  }
+  .live-dot.is-live {
+    background: var(--color-success);
+  }
+  .live-dot.is-live::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: inherit;
+    animation: live-ping 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+  }
+
+  /* Signal strength bars */
+  .signal-bars {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 0.75rem;
+  }
+  .signal-bars i {
+    width: 3px;
+    border-radius: 1px;
+    background: color-mix(in oklab, var(--color-base-content) 16%, transparent);
+    transition: background-color 0.3s ease;
+  }
+  .signal-bars i:nth-child(1) {
+    height: 30%;
+  }
+  .signal-bars i:nth-child(2) {
+    height: 52%;
+  }
+  .signal-bars i:nth-child(3) {
+    height: 76%;
+  }
+  .signal-bars i:nth-child(4) {
+    height: 100%;
+  }
+  .signal-bars[data-level="1"] i:nth-child(-n + 1),
+  .signal-bars[data-level="2"] i:nth-child(-n + 2),
+  .signal-bars[data-level="3"] i:nth-child(-n + 3),
+  .signal-bars[data-level="4"] i:nth-child(-n + 4) {
+    background: color-mix(in oklab, var(--color-base-content) 72%, transparent);
+  }
+
+  /* Thin storage meter */
+  .meter {
+    height: 3px;
+    border-radius: 9999px;
+    overflow: hidden;
+    background: color-mix(in oklab, var(--color-base-content) 11%, transparent);
+  }
+  .meter > span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--color-primary);
+    transition: width 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  /* Appearance picker */
+  .theme-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+  .theme-card .preview {
+    width: 100%;
+    height: 3.75rem;
+    border-radius: 0.75rem;
+    overflow: hidden;
+    display: flex;
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--color-base-content) 14%, transparent),
+      0 2px 6px -2px color-mix(in oklab, black 18%, transparent);
+    transition:
+      outline-color 0.2s ease,
+      transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .theme-card:hover .preview {
+    transform: translateY(-2px);
+  }
+  .theme-card.is-selected .preview {
+    outline-color: var(--color-primary);
+  }
+  .theme-card.is-selected span {
+    font-weight: 600;
+    color: var(--color-primary);
+  }
+
+  .swatch {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 9999px;
+    background: currentColor;
+    cursor: pointer;
+    transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .swatch-auto {
+    background: conic-gradient(
+      from 45deg,
+      oklch(60.5% 0.2 257) 0deg 120deg,
+      oklch(60% 0.155 42) 120deg 240deg,
+      oklch(71% 0.135 222) 240deg 360deg
+    );
+  }
+  .swatch:hover {
+    transform: scale(1.13);
+  }
+  .swatch .ico {
+    color: white;
+    font-size: 0.875rem;
+    stroke-width: 2.6;
+    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.28));
+    opacity: 0;
+    transform: scale(0.5);
+    transition:
+      opacity 0.18s ease,
+      transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .swatch.is-selected {
+    box-shadow:
+      0 0 0 2px var(--surface-elevated),
+      0 0 0 4px var(--color-primary);
+  }
+  .swatch.is-selected .ico {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  /* Touch devices always see secondary actions; pointer devices reveal on hover */
+  @media (hover: hover) and (pointer: fine) {
+    .reveal-on-hover {
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+    .group:hover .reveal-on-hover,
+    .reveal-on-hover:focus-visible {
+      opacity: 1;
+    }
+  }
+
+  /* Toasts */
+  .toast-item {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    max-width: 24rem;
+    padding: 0.625rem 1rem;
+    border-radius: 0.875rem;
+    font-size: 0.8125rem;
+    background: var(--color-neutral);
+    color: var(--color-neutral-content);
+    box-shadow:
+      0 12px 32px -12px color-mix(in oklab, black 45%, transparent),
+      0 0 0 1px color-mix(in oklab, white 8%, transparent);
+    animation: toast-in 0.34s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  }
+  .toast-item.is-leaving {
+    animation: toast-out 0.24s ease forwards;
+  }
+}
+
+/* ---------- Motion ---------- */
+@keyframes live-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  75%,
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes flash-bg {
+  0% {
+    background-color: color-mix(in oklab, var(--color-primary) 18%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+}
+
+.anim-rise {
+  animation: rise-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(min(var(--i, 0), 14) * 22ms);
+}
+.anim-fade {
+  animation: fade-in 0.28s ease both;
+}
+.anim-slide {
+  animation: slide-in-right 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.anim-pop-in {
+  animation: pop-in 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
+}
+.anim-pop-in.from-right {
+  transform-origin: bottom right;
+}
+.anim-pop-in.from-left {
+  transform-origin: bottom left;
+}
+.anim-flash {
+  animation: flash-bg 1.4s ease-out;
+}
+
+.theme-transition,
+.theme-transition *,
+.theme-transition *::before,
+.theme-transition *::after {
+  transition:
+    background-color 0.32s ease,
+    border-color 0.32s ease,
+    color 0.32s ease,
+    fill 0.32s ease,
+    box-shadow 0.32s ease !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -1,4 +1,23 @@
-// Real-time daisyUI Frontend Controller for H168-383 SMS Center (TypeScript)
+// Sujian (素笺) daisyUI frontend controller for the H168-383 SMS Center (TypeScript)
+
+import {
+  ACCENT_PALETTE,
+  BASE_THEMES,
+  describeSmsMode,
+  escapeHtml,
+  formatDayLabel,
+  formatShortTime,
+  initialsOf,
+  isAccentId,
+  isLikelyContactNameQuery,
+  isThemeId,
+  linkifyHtml,
+  parseMsgTime,
+  signalLevel,
+  threadGroupLabel,
+  type AccentId,
+  type ThemeId,
+} from "./ui-format.ts";
 
 interface CountryOption {
   code: string;
@@ -73,6 +92,76 @@ interface CpeStats {
   localMax: number;
 }
 
+interface StatusApiResponse {
+  ok: boolean;
+  data: {
+    device?: { deviceName?: string; marketingName?: string };
+    network?: { operatorName?: string; numericPlmn?: string };
+    signal?: { rsrp?: string; nrRsrp?: string };
+    sms?: { localUnread?: number; localInbox?: number; localOutbox?: number; localMax?: number };
+    archiveTotal?: number;
+  };
+}
+
+interface ThreadsApiResponse {
+  ok: boolean;
+  data: {
+    threads?: UiThread[];
+    archiveTotal?: number;
+    cpeStats?: CpeStats | null;
+    contactsTotal?: number;
+    defaultCountryCode?: string;
+    countries?: CountryOption[];
+  };
+}
+
+interface SyncApiResponse {
+  ok: boolean;
+  data: {
+    syncedFromCpe: number;
+    archiveTotal: number;
+  };
+}
+
+interface PreviewApiResponse {
+  ok: boolean;
+  data: {
+    recipient?: {
+      ok: boolean;
+      phone?: string;
+      countryZh?: string;
+      error?: string;
+    };
+  };
+}
+
+interface SendApiResponse {
+  ok: boolean;
+  data: {
+    resolvedPhones?: string[];
+  };
+}
+
+interface ContactsBookApiResponse {
+  ok: boolean;
+  data: {
+    contacts?: ContactEntry[];
+    total?: number;
+  };
+}
+
+interface ImportVcfApiResponse {
+  ok: boolean;
+  data: {
+    parsed: number;
+    added: number;
+    updated: number;
+    total: number;
+  };
+}
+
+type ThreadFilter = "all" | "unread" | "otp";
+
 interface AppState {
   authenticated: boolean;
   defaultCountryCode: string;
@@ -81,11 +170,10 @@ interface AppState {
   contacts: ContactEntry[];
   selectedThreadKey: string | null;
   activeThread: UiThreadDetail | null;
-  filter: "all" | "unread" | "otp";
+  filter: ThreadFilter;
   search: string;
   archiveTotal: number;
   cpeStats: CpeStats | null;
-  lastFullSyncAt: string | null;
   sse: EventSource | null;
 }
 
@@ -101,7 +189,6 @@ const state: AppState = {
   search: "",
   archiveTotal: 0,
   cpeStats: null,
-  lastFullSyncAt: null,
   sse: null,
 };
 
@@ -109,115 +196,223 @@ function byId<T extends HTMLElement = HTMLElement>(id: string): T {
   return document.getElementById(id) as T;
 }
 
-// --- Theme Management ---
-const savedTheme = localStorage.getItem("cpe_sms_theme") || "light";
-document.documentElement.setAttribute("data-theme", savedTheme);
-document.querySelectorAll<HTMLButtonElement>("[data-set-theme]").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    const theme = btn.getAttribute("data-set-theme") || "light";
-    document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("cpe_sms_theme", theme);
-    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-  });
+function icon(name: string, cls = ""): string {
+  return `<svg class="ico ${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+}
+
+// =====================================================================
+// Appearance (base theme + accent colour + follow-system)
+// =====================================================================
+interface Appearance {
+  theme: ThemeId;
+  accent: AccentId;
+  followSystem: boolean;
+}
+
+const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+function loadAppearance(): Appearance {
+  const theme = localStorage.getItem("cpe_sms_theme");
+  const accent = localStorage.getItem("cpe_sms_accent");
+  return {
+    theme: isThemeId(theme) ? theme : "sujian-light",
+    accent: isAccentId(accent) ? accent : "default",
+    followSystem: localStorage.getItem("cpe_sms_follow_system") !== "0",
+  };
+}
+
+const appearance = loadAppearance();
+
+function effectiveTheme(): ThemeId {
+  if (appearance.followSystem) return darkQuery.matches ? "sujian-dark" : "sujian-light";
+  return appearance.theme;
+}
+
+function applyAppearance(animate: boolean): void {
+  const root = document.documentElement;
+  if (animate) {
+    root.classList.add("theme-transition");
+    window.setTimeout(() => root.classList.remove("theme-transition"), 360);
+  }
+  root.setAttribute("data-theme", effectiveTheme());
+  root.setAttribute("data-accent", appearance.accent);
+  localStorage.setItem("cpe_sms_theme", appearance.theme);
+  localStorage.setItem("cpe_sms_accent", appearance.accent);
+  localStorage.setItem("cpe_sms_follow_system", appearance.followSystem ? "1" : "0");
+  renderAppearancePicker();
+}
+
+function renderAppearancePicker(): void {
+  const current = effectiveTheme();
+  byId("themeOptions").innerHTML = BASE_THEMES.map(
+    (t) => `
+      <button type="button" data-theme-option="${t.id}" class="theme-card ${t.id === current ? "is-selected" : ""}">
+        <div class="preview" data-theme="${t.id}">
+          <div class="w-[34%] bg-base-200 p-1.5 space-y-1">
+            <div class="h-1 w-3/4 rounded-full bg-primary"></div>
+            <div class="h-1 rounded-full bg-base-content/20"></div>
+            <div class="h-1 w-2/3 rounded-full bg-base-content/20"></div>
+          </div>
+          <div class="flex-1 bg-base-100 p-1.5 flex flex-col gap-1">
+            <div class="h-1.5 w-2/3 rounded-full bg-base-content/70"></div>
+            <div class="h-1 w-5/6 rounded-full bg-base-content/15"></div>
+            <div class="mt-auto self-end h-2.5 w-7 rounded-full bg-primary"></div>
+          </div>
+        </div>
+        <span>${t.label}</span>
+      </button>`
+  ).join("");
+
+  const activeAccentMeta = ACCENT_PALETTE.find((a) => a.id === appearance.accent) ?? ACCENT_PALETTE[0];
+  byId("accentActiveLabel").textContent = activeAccentMeta.label;
+
+  byId("accentOptions").innerHTML = ACCENT_PALETTE.map((a) => {
+    const isAuto = a.id === "default";
+    const styleAttr = isAuto ? "" : `style="color:${a.color}"`;
+    return `
+      <div class="tooltip" data-tip="${a.label}">
+        <button type="button" data-accent-option="${a.id}" aria-label="${a.label}"
+          class="swatch ${isAuto ? "swatch-auto" : ""} ${a.id === appearance.accent ? "is-selected" : ""}" ${styleAttr}>
+          ${icon("check")}
+        </button>
+      </div>`;
+  }).join("");
+
+  byId<HTMLInputElement>("followSystemToggle").checked = appearance.followSystem;
+}
+
+function openAppearanceModal(): void {
+  renderAppearancePicker();
+  byId<HTMLDialogElement>("appearanceModal").showModal();
+}
+
+byId("themeOptions").addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLElement>("[data-theme-option]");
+  const id = btn?.getAttribute("data-theme-option") ?? null;
+  if (!isThemeId(id)) return;
+  appearance.theme = id;
+  appearance.followSystem = false;
+  applyAppearance(true);
 });
 
-// --- Helpers ---
-function escapeHtml(str: unknown): string {
-  return String(str ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+byId("accentOptions").addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLElement>("[data-accent-option]");
+  const id = btn?.getAttribute("data-accent-option") ?? null;
+  if (!isAccentId(id)) return;
+  appearance.accent = id;
+  applyAppearance(true);
+});
 
-function linkifyHtml(str: string): string {
-  const escaped = escapeHtml(str);
-  return escaped.replace(
-    /(https?:\/\/[^\s<]+)/gi,
-    '<a href="$1" target="_blank" rel="noopener noreferrer" class="underline font-medium break-all">$1</a>'
-  );
-}
+byId<HTMLInputElement>("followSystemToggle").addEventListener("change", (e) => {
+  appearance.followSystem = (e.target as HTMLInputElement).checked;
+  if (!appearance.followSystem) appearance.theme = darkQuery.matches ? "sujian-dark" : "sujian-light";
+  applyAppearance(true);
+});
 
-function formatShortTime(dateStr?: string): string {
-  if (!dateStr) return "";
-  const [d, t] = dateStr.split(" ");
-  if (!d || !t) return dateStr;
-  const now = new Date();
-  const pad = (n: number): string => String(n).padStart(2, "0");
-  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  return d === today ? t.slice(0, 5) : `${d.slice(5)} ${t.slice(0, 5)}`;
-}
+darkQuery.addEventListener("change", () => {
+  if (appearance.followSystem) applyAppearance(true);
+});
 
-function estimateLocalSmsMode(text: string): {
-  encoding: "7BIT" | "UCS2";
-  segments: number;
-  len: number;
-} {
-  if (!text) return { encoding: "7BIT", segments: 0, len: 0 };
-  const isAscii7 = /^[\x0A\x0D\x20-\x7E€£¥èéùìòÇØøÅå_ÆæßÉÄÖÑÜ§¿äöñüà]*$/.test(text);
-  if (!isAscii7) {
-    const len = text.length;
-    return { encoding: "UCS2", segments: len <= 70 ? 1 : Math.ceil(len / 67), len };
-  }
-  const len = text.length;
-  return { encoding: "7BIT", segments: len <= 160 ? 1 : Math.ceil(len / 153), len };
+byId("appearanceBtn").addEventListener("click", openAppearanceModal);
+byId("loginAppearanceBtn").addEventListener("click", openAppearanceModal);
+byId("mobileAppearanceBtn").addEventListener("click", openAppearanceModal);
+
+applyAppearance(false);
+
+document.querySelectorAll<HTMLElement>("[data-close-modal]").forEach((btn) => {
+  btn.addEventListener("click", () => btn.closest("dialog")?.close());
+});
+
+// =====================================================================
+// UI Helpers & Network
+// =====================================================================
+function avatarHtml(opts: {
+  name: string;
+  hasContact: boolean;
+  senderType: string;
+  size: string;
+  extra?: string;
+}): string {
+  const isBrand = ["alphanumeric", "shortcode", "gateway"].includes(opts.senderType);
+  const content = opts.hasContact || isBrand ? escapeHtml(initialsOf(opts.name)) : icon("user", "text-[1.1em]");
+  return `<div class="avatar-ph ${isBrand ? "is-brand" : ""} ${opts.size} ${opts.extra ?? ""}">${content}</div>`;
 }
 
 function showToast(message: string, type: "info" | "success" | "error" | "warning" = "info"): void {
   const container = byId("toastContainer");
-  const alertClass =
-    type === "success"
-      ? "alert-success"
-      : type === "error"
-        ? "alert-error"
-        : type === "warning"
-          ? "alert-warning"
-          : "alert-info";
-
+  const iconName = type === "success" ? "check" : type === "error" ? "x" : type === "warning" ? "alert" : "info";
+  const color =
+    type === "success" ? "text-success" : type === "error" ? "text-error" : type === "warning" ? "text-warning" : "text-info";
   const el = document.createElement("div");
-  el.className = `alert ${alertClass} shadow-lg text-xs py-2.5 px-4 pointer-events-auto transition-all duration-300`;
-  el.innerHTML = `<span>${escapeHtml(message)}</span>`;
+  el.className = "toast-item pointer-events-auto";
+  el.innerHTML = `${icon(iconName, `text-base ${color}`)}<span>${escapeHtml(message)}</span>`;
   container.appendChild(el);
-  setTimeout(() => {
-    el.style.opacity = "0";
-    setTimeout(() => el.remove(), 300);
-  }, 3600);
+  window.setTimeout(() => {
+    el.classList.add("is-leaving");
+    window.setTimeout(() => el.remove(), 260);
+  }, 3400);
 }
 
-async function copyText(text: string, label = "已复制"): Promise<void> {
+async function copyText(text: string, label = "已复制"): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
-    showToast(`${label}: ${text}`, "success");
+    showToast(`${label} ${text}`, "success");
+    return true;
   } catch {
     showToast("复制失败，请手动选中复制", "warning");
+    return false;
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function apiFetch<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+function flashCopied(btn: HTMLElement): void {
+  btn.classList.add("is-copied");
+  const hint = btn.querySelector<HTMLElement>("[data-copy-hint]");
+  const prev = hint?.textContent ?? "";
+  if (hint) hint.textContent = "已复制";
+  window.setTimeout(() => {
+    btn.classList.remove("is-copied");
+    if (hint) hint.textContent = prev;
+  }, 1600);
+}
+
+function otpChipHtml(code: string, attr: string, withHint: boolean): string {
+  return `<button type="button" ${attr}="${escapeHtml(code)}" class="otp-chip" title="点击复制验证码">
+    ${icon("key", "text-[0.95em]")}<span class="code">${escapeHtml(code)}</span>${
+      withHint ? `<span data-copy-hint class="text-base-content/45">复制</span>` : ""
+    }</button>`;
+}
+
+function restartAnimation(el: HTMLElement, cls: string): void {
+  el.classList.remove(cls);
+  void el.offsetWidth;
+  el.classList.add(cls);
+}
+
+async function apiFetch<T = { ok: boolean }>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options,
   });
-  const data = await res
-    .json()
-    .catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
+  const data = (await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }))) as {
+    ok?: boolean;
+    error?: string;
+  };
   if (res.status === 401 && path !== "/api/auth/login") {
     showLoginScreen();
     throw new Error("登录会话已过期");
   }
   if (!res.ok || data.ok === false) {
-    throw new Error((data.error as string) || `请求失败 (${res.status})`);
+    throw new Error(data.error || `请求失败 (${res.status})`);
   }
   return data as T;
 }
 
-// --- Views & Auth ---
+// =====================================================================
+// Views & Auth
+// =====================================================================
 const loginView = byId("loginView");
 const appView = byId("appView");
-const sidebarPane = byId("sidebarPane");
-const chatPane = byId("chatPane");
-const mobileBackBtn = byId<HTMLButtonElement>("mobileBackBtn");
+const navDrawer = byId<HTMLInputElement>("navDrawer");
 
 function showLoginScreen(): void {
   state.authenticated = false;
@@ -235,6 +430,7 @@ async function enterWorkspace(): Promise<void> {
   loginView.classList.add("hidden");
   appView.classList.remove("hidden");
 
+  listAnimateNext = true;
   await Promise.all([loadThreads(), loadContactsBook(), refreshDeviceStatus()]);
   connectSse();
 
@@ -258,6 +454,7 @@ byId<HTMLFormElement>("loginForm").addEventListener("submit", async (e) => {
   const btn = byId<HTMLButtonElement>("loginSubmitBtn");
   errEl.classList.add("hidden");
   btn.disabled = true;
+  btn.innerHTML = `<span class="loading loading-spinner loading-sm"></span>`;
 
   try {
     const res = await apiFetch<{ ok: boolean; defaultCountryCode?: string }>("/api/auth/login", {
@@ -270,8 +467,10 @@ byId<HTMLFormElement>("loginForm").addEventListener("submit", async (e) => {
   } catch (err) {
     errEl.textContent = err instanceof Error ? err.message : String(err);
     errEl.classList.remove("hidden");
+    restartAnimation(byId("loginForm"), "anim-pop-in");
   } finally {
     btn.disabled = false;
+    btn.textContent = "登录";
   }
 });
 
@@ -280,41 +479,37 @@ byId<HTMLButtonElement>("logoutBtn").addEventListener("click", async () => {
   showLoginScreen();
 });
 
-// --- Real-Time SSE Connection ---
+// =====================================================================
+// Real-time SSE
+// =====================================================================
+function setLiveIndicator(live: boolean): void {
+  byId("sseDot").classList.toggle("is-live", live);
+  byId("sseLabel").textContent = live ? "实时" : "重连中";
+}
+
 function connectSse(): void {
   if (state.sse) state.sse.close();
-  const badge = byId("sseBadge");
   const es = new EventSource("/api/events");
   state.sse = es;
 
-  es.addEventListener("open", () => {
-    badge.className = "badge badge-xs badge-success gap-1";
-    badge.textContent = "实时在线";
-  });
-
-  es.addEventListener("error", () => {
-    badge.className = "badge badge-xs badge-warning gap-1";
-    badge.textContent = "重连中...";
-  });
+  es.addEventListener("open", () => setLiveIndicator(true));
+  es.addEventListener("error", () => setLiveIndicator(false));
 
   es.addEventListener("sms:new", (ev) => {
     void (async () => {
       const msg = JSON.parse((ev as MessageEvent<string>).data) as UiSmsMessage;
       const who = msg.contact?.name || msg.phone;
-      const otpTxt = msg.verificationCode ? ` [验证码: ${msg.verificationCode}]` : "";
-      showToast(`📩 新短信来自 ${who}${otpTxt}`, "success");
+      showToast(msg.verificationCode ? `${who} · 验证码 ${msg.verificationCode}` : `新信息 · ${who}`, "info");
 
       if ("Notification" in window && Notification.permission === "granted" && document.hidden) {
         new Notification(`新短信 · ${who}`, {
-          body: msg.verificationCode
-            ? `验证码 ${msg.verificationCode} · ${msg.content}`
-            : msg.content,
+          body: msg.verificationCode ? `验证码 ${msg.verificationCode} · ${msg.content}` : msg.content,
         });
       }
 
       await loadThreads();
       if (state.selectedThreadKey && state.selectedThreadKey === msg.threadKey) {
-        await openThread(state.selectedThreadKey, { preserveScroll: false });
+        await refreshActiveThread({ preserveScroll: false });
       }
     })();
   });
@@ -323,43 +518,35 @@ function connectSse(): void {
     void (async () => {
       const msg = JSON.parse((ev as MessageEvent<string>).data) as UiSmsMessage;
       await loadThreads();
-      if (state.selectedThreadKey === msg.threadKey && state.selectedThreadKey) {
-        await openThread(state.selectedThreadKey, { preserveScroll: false });
+      if (state.selectedThreadKey && state.selectedThreadKey === msg.threadKey) {
+        await refreshActiveThread({ preserveScroll: false });
       }
     })();
   });
 
-  es.addEventListener("sms:updated", () => {
+  const refreshAll = (): void => {
     void (async () => {
       await loadThreads();
-      if (state.selectedThreadKey) {
-        await openThread(state.selectedThreadKey, { preserveScroll: true });
-      }
+      await refreshActiveThread({ preserveScroll: true });
     })();
-  });
+  };
+
+  es.addEventListener("sms:updated", refreshAll);
 
   es.addEventListener("sms:sync", (ev) => {
-    void (async () => {
-      const summary = JSON.parse((ev as MessageEvent<string>).data) as {
-        archiveTotal: number;
-        cpeStats: CpeStats;
-      };
-      state.archiveTotal = summary.archiveTotal;
-      state.cpeStats = summary.cpeStats;
-      await loadThreads();
-      if (state.selectedThreadKey) {
-        await openThread(state.selectedThreadKey, { preserveScroll: true });
-      }
-    })();
+    const summary = JSON.parse((ev as MessageEvent<string>).data) as {
+      archiveTotal: number;
+      cpeStats: CpeStats;
+    };
+    state.archiveTotal = summary.archiveTotal;
+    state.cpeStats = summary.cpeStats;
+    refreshAll();
   });
 
   es.addEventListener("contacts:updated", () => {
     void (async () => {
       await loadContactsBook();
-      await loadThreads();
-      if (state.selectedThreadKey) {
-        await openThread(state.selectedThreadKey, { preserveScroll: true });
-      }
+      refreshAll();
     })();
   });
 
@@ -372,93 +559,102 @@ function connectSse(): void {
   });
 }
 
-// --- Device Status & Full Sync ---
+// =====================================================================
+// Device status & full sync
+// =====================================================================
 async function refreshDeviceStatus(): Promise<void> {
   try {
-    const res = await apiFetch("/api/status");
+    const res = await apiFetch<StatusApiResponse>("/api/status");
     const d = res.data;
     const op = d.network?.operatorName || d.network?.numericPlmn || "未知运营商";
-    const sig5g = d.signal?.nrRsrp ? `5G ${d.signal.nrRsrp}` : "";
-    const sig4g = d.signal?.rsrp ? `4G ${d.signal.rsrp}` : "";
-    const sigText = [sig5g, sig4g].filter(Boolean).join(" / ") || "信号正常";
-    const unread = d.sms?.localUnread ?? 0;
-    const inbox = d.sms?.localInbox ?? 0;
-    const max = d.sms?.localMax ?? 500;
+    const nr = d.signal?.nrRsrp;
+    const lte = d.signal?.rsrp;
+    const sigText = nr ? `5G ${nr}` : lte ? `4G ${lte}` : "";
 
-    byId("signalSubtitle").textContent =
-      `${d.device.marketingName || d.device.deviceName} · ${op} · ${sigText} · 未读 ${unread} 条 (${inbox}/${max})`;
+    byId("deviceName").textContent = d.device?.marketingName || d.device?.deviceName || "H168-383";
+    byId("signalSubtitle").textContent = [op, sigText].filter(Boolean).join(" · ");
+    byId("signalBars").setAttribute("data-level", String(signalLevel(nr || lte)));
 
     state.cpeStats = {
-      localUnread: unread,
-      localInbox: inbox,
+      localUnread: d.sms?.localUnread ?? 0,
+      localInbox: d.sms?.localInbox ?? 0,
       localOutbox: d.sms?.localOutbox ?? 0,
-      localMax: max,
+      localMax: d.sms?.localMax ?? 500,
     };
     state.archiveTotal = d.archiveTotal ?? state.archiveTotal;
     updateFooterStats();
   } catch {
-    // Non-fatal on status bar
+    byId("signalSubtitle").textContent = "设备状态暂不可用";
   }
 }
 
 async function triggerFullHistorySync(): Promise<void> {
   const btn = byId<HTMLButtonElement>("syncAllBtn");
-  const icon = byId("syncIcon");
+  const syncIcon = byId("syncIcon");
   btn.disabled = true;
-  icon.classList.add("animate-spin");
+  syncIcon.classList.add("animate-spin");
 
   try {
-    const res = await apiFetch("/api/archive/sync", { method: "POST" });
-    showToast(
-      `已同步 CPE 全部 ${res.data.syncedFromCpe} 条短信，本地历史共归档 ${res.data.archiveTotal} 条`,
-      "success"
-    );
+    const res = await apiFetch<SyncApiResponse>("/api/archive/sync", { method: "POST" });
+    showToast(`已同步 ${res.data.syncedFromCpe} 条，本地共归档 ${res.data.archiveTotal} 条`, "success");
     await Promise.all([loadThreads(), refreshDeviceStatus()]);
-    if (state.selectedThreadKey) {
-      await openThread(state.selectedThreadKey, { preserveScroll: true });
-    }
+    await refreshActiveThread({ preserveScroll: true });
   } catch (err) {
-    showToast(`同步失败: ${err instanceof Error ? err.message : String(err)}`, "error");
+    showToast(`同步失败：${err instanceof Error ? err.message : String(err)}`, "error");
   } finally {
     btn.disabled = false;
-    icon.classList.remove("animate-spin");
+    syncIcon.classList.remove("animate-spin");
   }
 }
 
 byId("syncAllBtn").addEventListener("click", () => void triggerFullHistorySync());
 byId("emptySyncBtn").addEventListener("click", () => void triggerFullHistorySync());
 
-// --- Thread List Rendering ---
 function updateFooterStats(): void {
-  byId("archiveFooterText").textContent = `本地加密归档 ${state.archiveTotal} 条`;
+  const archiveSpan = byId("archiveFooterText").querySelector("span");
+  if (archiveSpan) archiveSpan.textContent = `本地加密归档 ${state.archiveTotal} 条`;
   if (state.cpeStats) {
-    byId("cpeCapFooterText").textContent =
-      `CPE 存储 ${state.cpeStats.localInbox} / ${state.cpeStats.localMax}`;
+    const { localInbox, localOutbox, localMax } = state.cpeStats;
+    const used = localInbox + localOutbox;
+    byId("cpeCapFooterText").textContent = `${used} / ${localMax}`;
+    const pct = localMax > 0 ? Math.min(100, (used / localMax) * 100) : 0;
+    byId("cpeCapBar").style.width = `${pct.toFixed(1)}%`;
   }
 }
 
+// =====================================================================
+// Thread list
+// =====================================================================
+const FILTER_META: Record<ThreadFilter, { title: string; icon: string; color: string; empty: string }> = {
+  all: { title: "收件箱", icon: "inbox", color: "text-primary", empty: "还没有任何对话" },
+  unread: { title: "未读", icon: "unread", color: "text-warning", empty: "全部已读，干得漂亮" },
+  otp: { title: "验证码", icon: "key", color: "text-success", empty: "没有包含验证码的短信" },
+};
+
+let listAnimateNext = true;
+const seenThreadLatest = new Map<string, string>();
+
 async function loadThreads(): Promise<void> {
-  const params = new URLSearchParams({
-    filter: state.filter,
-    search: state.search,
-  });
-  const res = await apiFetch(`/api/archive/threads?${params.toString()}`);
+  const params = new URLSearchParams({ filter: state.filter, search: state.search });
+  const res = await apiFetch<ThreadsApiResponse>(`/api/archive/threads?${params.toString()}`);
   const d = res.data;
 
-  state.threads = (d.threads as UiThread[]) || [];
+  state.threads = d.threads ?? [];
   state.archiveTotal = d.archiveTotal ?? 0;
   state.cpeStats = d.cpeStats ?? state.cpeStats;
   if (d.defaultCountryCode) state.defaultCountryCode = d.defaultCountryCode;
   if (Array.isArray(d.countries) && d.countries.length > 0 && state.countries.length === 0) {
-    state.countries = d.countries as CountryOption[];
+    state.countries = d.countries;
     populateCountrySelect();
   }
 
-  byId("contactsCountBadge").textContent = String(d.contactsTotal ?? 0);
+  byId("contactsCountBadge").textContent = d.contactsTotal ? String(d.contactsTotal) : "";
   if (state.filter === "all" && !state.search) {
-    byId("tabCountAll").textContent = String(state.threads.length);
-    const unreadThreads = state.threads.reduce((acc, t) => acc + t.unreadCount, 0);
-    byId("tabCountUnread").textContent = String(unreadThreads);
+    const unread = state.threads.reduce((acc, t) => acc + t.unreadCount, 0);
+    byId("navCountAll").textContent = state.threads.length ? String(state.threads.length) : "";
+    byId("navCountUnread").textContent = unread > 0 ? String(unread) : "";
+    const otp = state.threads.filter((t) => t.hasOtp).length;
+    byId("navCountOtp").textContent = otp > 0 ? String(otp) : "";
   }
   updateFooterStats();
   renderThreadList();
@@ -466,180 +662,226 @@ async function loadThreads(): Promise<void> {
 
 function renderThreadList(): void {
   const container = byId("threadList");
+  const meta = FILTER_META[state.filter];
+  byId("listCount").textContent = state.threads.length ? String(state.threads.length) : "";
+
   if (state.threads.length === 0) {
     container.innerHTML = `
-      <div class="p-8 text-center text-xs text-base-content/50 space-y-2">
-        <div class="text-2xl">📭</div>
-        <div>没有匹配的短信会话</div>
-        <div class="text-[11px]">如果是首次启动，可点击右上角「🔄 同步历史」拉取全部旧短信</div>
-      </div>
-    `;
+      <div class="flex flex-col items-center justify-center text-center gap-3 pt-20 px-6 anim-fade">
+        ${icon(meta.icon, "text-4xl text-base-content/15")}
+        <div class="text-sm text-base-content/55">${state.search ? "没有匹配的结果" : meta.empty}</div>
+        ${
+          state.filter === "all" && !state.search
+            ? `<div class="text-xs text-base-content/40">首次使用可在左下角「同步历史」拉取 CPE 中的旧短信</div>`
+            : ""
+        }
+      </div>`;
+    listAnimateNext = false;
     return;
   }
 
-  container.innerHTML = state.threads
-    .map((t) => {
-      const active = t.threadKey === state.selectedThreadKey;
-      const preview = (t.matchedPreview || t.latestMessage?.content || "").replace(/\s+/g, " ");
-      const countryTag = t.sender.countryCode
-        ? `${t.sender.flag} ${t.sender.countryZh} ${t.sender.countryCode}`
-        : `${t.sender.flag} ${t.sender.countryZh}`;
-      const subNumber =
-        t.contact && t.sender.e164
-          ? `<span class="text-[11px] text-base-content/50 font-mono">${escapeHtml(t.sender.e164)}</span>`
-          : "";
+  const animateAll = listAnimateNext;
+  listAnimateNext = false;
+  const firstRender = seenThreadLatest.size === 0;
+  let i = 0;
+  let lastGroup = "";
+  const html: string[] = [];
 
-      return `
-        <div
-          data-thread-key="${escapeHtml(t.threadKey)}"
-          class="thread-item px-3.5 py-3 cursor-pointer transition-colors hover:bg-base-200/70 ${
-            active ? "bg-primary/10 border-l-4 border-l-primary" : ""
-          }"
-        >
-          <div class="flex items-start justify-between gap-2">
-            <div class="flex items-center gap-2 min-w-0">
-              <span class="text-lg shrink-0" title="${escapeHtml(countryTag)}">${t.sender.flag}</span>
-              <span class="font-semibold text-sm truncate">${escapeHtml(t.displayName)}</span>
-            </div>
-            <span class="text-[11px] text-base-content/50 shrink-0">${escapeHtml(
+  for (const t of state.threads) {
+    const group = threadGroupLabel(t.latestMessage?.date);
+    if (group !== lastGroup) {
+      html.push(`<div class="section-head ${animateAll ? "anim-rise" : ""}" style="--i:${i}"><span>${group}</span></div>`);
+      lastGroup = group;
+    }
+
+    const latestUid = t.latestMessage?.uid ?? "";
+    const prevUid = seenThreadLatest.get(t.threadKey);
+    const isNewActivity = !firstRender && !animateAll && prevUid !== latestUid;
+    seenThreadLatest.set(t.threadKey, latestUid);
+
+    const active = t.threadKey === state.selectedThreadKey;
+    const unread = t.unreadCount > 0;
+    const preview = (t.matchedPreview || t.latestMessage?.content || "").replace(/\s+/g, " ");
+    const animCls = animateAll ? "anim-rise" : isNewActivity ? (prevUid === undefined ? "anim-rise" : "anim-flash") : "";
+
+    html.push(`
+      <div role="button" tabindex="0" data-thread-key="${escapeHtml(t.threadKey)}"
+        class="thread-row ${active ? "is-active" : ""} ${animCls}" style="--i:${i}">
+        ${avatarHtml({ name: t.displayName, hasContact: Boolean(t.contact), senderType: t.sender.type, size: "size-10 text-sm" })}
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-2">
+            <span class="truncate text-[15px] ${unread ? "font-bold" : "font-semibold"}">${escapeHtml(t.displayName)}</span>
+            <span class="ml-auto shrink-0 text-xs tabular-nums ${unread ? "text-primary font-medium" : "text-base-content/40"}">${escapeHtml(
               formatShortTime(t.latestMessage?.date)
             )}</span>
           </div>
-
-          <div class="flex items-center gap-1.5 mt-1 flex-wrap">
-            <span class="badge badge-ghost badge-xs">${escapeHtml(countryTag)}</span>
-            ${subNumber}
+          <div class="mt-0.5 flex items-start gap-2">
+            <p class="flex-1 text-[13px] leading-snug line-clamp-2 ${unread ? "text-base-content/80" : "text-base-content/50"}">${
+              t.latestMessage?.direction === "out" ? `<span class="text-base-content/40">我：</span>` : ""
+            }${escapeHtml(preview)}</p>
             ${
-              t.latestOtp
-                ? `<button data-copy-otp="${escapeHtml(
-                    t.latestOtp
-                  )}" class="badge badge-secondary badge-outline badge-xs cursor-pointer hover:badge-secondary" title="点击复制验证码">🔑 ${escapeHtml(
-                    t.latestOtp
-                  )}</button>`
+              unread
+                ? t.unreadCount > 1
+                  ? `<span class="badge badge-primary badge-sm rounded-full font-semibold tabular-nums mt-0.5">${t.unreadCount}</span>`
+                  : `<span class="unread-dot mt-1.5"></span>`
                 : ""
             }
           </div>
-
-          <div class="flex items-center justify-between gap-2 mt-1.5">
-            <p class="text-xs ${
-              t.unreadCount > 0 ? "text-base-content font-medium" : "text-base-content/65"
-            } truncate">
-              ${t.latestMessage?.direction === "out" ? '<span class="opacity-60">我: </span>' : ""}${escapeHtml(
-                preview
-              )}
-            </p>
-            ${
-              t.unreadCount > 0
-                ? `<span class="badge badge-primary badge-xs font-bold shrink-0">${t.unreadCount}</span>`
-                : `<span class="text-[10px] text-base-content/40 shrink-0">${t.totalCount}条</span>`
-            }
-          </div>
+          ${t.latestOtp ? `<div class="mt-1.5">${otpChipHtml(t.latestOtp, "data-copy-otp", false)}</div>` : ""}
         </div>
-      `;
-    })
-    .join("");
+      </div>`);
+    i += 1;
+  }
 
-  container.querySelectorAll<HTMLButtonElement>("[data-copy-otp]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const otp = btn.getAttribute("data-copy-otp") || "";
-      void copyText(otp, "验证码已复制");
-    });
-  });
-
-  container.querySelectorAll<HTMLElement>(".thread-item").forEach((el) => {
-    el.addEventListener("click", () => {
-      const key = el.getAttribute("data-thread-key");
-      if (key) void openThread(key);
-    });
-  });
+  container.innerHTML = html.join("");
+  if (animateAll) container.scrollTop = 0;
 }
 
-// Search & Filter Tabs
+byId("threadList").addEventListener("click", (e) => {
+  const target = e.target as HTMLElement;
+  const otpBtn = target.closest<HTMLElement>("[data-copy-otp]");
+  if (otpBtn) {
+    e.stopPropagation();
+    const code = otpBtn.getAttribute("data-copy-otp") || "";
+    void copyText(code, "验证码已复制").then((ok) => ok && flashCopied(otpBtn));
+    return;
+  }
+  const row = target.closest<HTMLElement>("[data-thread-key]");
+  const key = row?.getAttribute("data-thread-key");
+  if (key) void openThread(key);
+});
+
+byId("threadList").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const row = (e.target as HTMLElement).closest<HTMLElement>("[data-thread-key]");
+  const key = row?.getAttribute("data-thread-key");
+  if (key) {
+    e.preventDefault();
+    void openThread(key);
+  }
+});
+
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 byId<HTMLInputElement>("searchInput").addEventListener("input", (e) => {
   state.search = (e.target as HTMLInputElement).value;
   if (searchTimer) clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => void loadThreads(), 180);
+  searchTimer = setTimeout(() => {
+    listAnimateNext = true;
+    void loadThreads();
+  }, 180);
 });
 
-document.querySelectorAll<HTMLButtonElement>("[data-filter]").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    document
-      .querySelectorAll<HTMLButtonElement>("[data-filter]")
-      .forEach((t) => t.classList.remove("tab-active"));
-    tab.classList.add("tab-active");
-    const f = tab.getAttribute("data-filter");
-    state.filter = f === "unread" || f === "otp" ? f : "all";
-    void loadThreads();
+function setFilter(f: ThreadFilter): void {
+  state.filter = f;
+  const meta = FILTER_META[f];
+  document.querySelectorAll<HTMLButtonElement>("[data-filter]").forEach((btn) => {
+    btn.classList.toggle("is-active", btn.getAttribute("data-filter") === f);
+  });
+  byId("listTitle").textContent = meta.title;
+  const titleIcon = byId("listTitleIcon");
+  titleIcon.setAttribute("class", `ico text-[1.4rem] ${meta.color} transition-colors anim-pop-in`);
+  titleIcon.querySelector("use")?.setAttribute("href", `#i-${meta.icon}`);
+  navDrawer.checked = false;
+  listAnimateNext = true;
+  void loadThreads();
+}
+
+document.querySelectorAll<HTMLButtonElement>("[data-filter]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const f = btn.getAttribute("data-filter");
+    setFilter(f === "unread" || f === "otp" ? f : "all");
   });
 });
 
-// --- Conversation Detail View ---
+// =====================================================================
+// Conversation view
+// =====================================================================
+const chatPane = byId("chatPane");
+const messagesList = byId("messagesList");
+let renderedThreadKey: string | null = null;
+const renderedMsgUids = new Set<string>();
+
 function setMobileChatVisible(visible: boolean): void {
-  if (visible) {
-    sidebarPane.classList.add("hidden", "lg:flex");
-    chatPane.classList.remove("hidden");
-    chatPane.classList.add("flex");
-    mobileBackBtn.classList.remove("hidden");
-  } else {
-    sidebarPane.classList.remove("hidden");
-    chatPane.classList.add("hidden");
-    chatPane.classList.remove("flex");
-    mobileBackBtn.classList.add("hidden");
+  appView.setAttribute("data-mobile-view", visible ? "chat" : "list");
+  if (visible && window.matchMedia("(max-width: 767.98px)").matches) {
+    restartAnimation(chatPane, "anim-slide");
   }
 }
 
-mobileBackBtn.addEventListener("click", () => {
-  setMobileChatVisible(false);
-});
+byId<HTMLButtonElement>("mobileBackBtn").addEventListener("click", () => setMobileChatVisible(false));
 
-async function openThread(
-  threadKey: string,
-  opts: { preserveScroll: boolean } = { preserveScroll: false }
-): Promise<void> {
+async function openThread(threadKey: string): Promise<void> {
   state.selectedThreadKey = threadKey;
-  renderThreadList();
+  document.querySelectorAll<HTMLElement>("#threadList [data-thread-key]").forEach((el) => {
+    el.classList.toggle("is-active", el.getAttribute("data-thread-key") === threadKey);
+  });
   setMobileChatVisible(true);
+  await refreshActiveThread({ preserveScroll: false });
+}
 
-  const res = await apiFetch(`/api/archive/thread?key=${encodeURIComponent(threadKey)}`);
-  const detail = res.data as UiThreadDetail;
+async function refreshActiveThread(opts: { preserveScroll: boolean }): Promise<void> {
+  const threadKey = state.selectedThreadKey;
+  if (!threadKey) return;
+
+  const res = await apiFetch<{ ok: boolean; data: UiThreadDetail | null }>(
+    `/api/archive/thread?key=${encodeURIComponent(threadKey)}`
+  );
+  const detail = res.data;
+  if (!detail || state.selectedThreadKey !== threadKey) return;
   state.activeThread = detail;
 
-  byId("emptyChatState").classList.add("hidden");
-  byId("activeChatContainer").classList.remove("hidden");
+  const isSwitch = renderedThreadKey !== threadKey;
+  if (isSwitch) {
+    renderedThreadKey = threadKey;
+    renderedMsgUids.clear();
+  }
 
+  byId("emptyChatState").classList.add("hidden");
+  const container = byId("activeChatContainer");
+  container.classList.remove("hidden");
+  if (isSwitch) restartAnimation(container, "anim-fade");
+
+  renderChatHeader(detail);
+  renderComposerState(detail);
+  renderMessages(detail, { isSwitch, preserveScroll: opts.preserveScroll });
+}
+
+function renderChatHeader(detail: UiThreadDetail): void {
   const s = detail.sender;
-  byId("chatHeaderFlag").textContent = s.flag || "📱";
   const title = detail.contact
     ? detail.contact.name
     : s.brandHint && s.type !== "alphanumeric"
       ? `${s.e164 || detail.phone} (${s.brandHint})`
       : s.e164 || detail.phone;
   byId("chatHeaderTitle").textContent = title;
-  byId("chatHeaderCountryBadge").textContent = s.countryCode
-    ? `${s.countryZh} ${s.countryCode}`
-    : s.countryZh;
-  byId("chatHeaderSub").textContent = detail.contact
-    ? `号码: ${s.e164 || detail.phone}${detail.contact.note ? ` · ${detail.contact.note}` : ""} · 共 ${detail.messages.length} 条记录`
-    : `原始号码: ${detail.phone} · 共 ${detail.messages.length} 条记录`;
 
-  const unreadIndices = detail.messages
-    .filter((m) => m.isUnread && m.onCpe && m.index > 0)
-    .map((m) => m.index);
+  const avatarSlot = byId("chatHeaderAvatar");
+  avatarSlot.outerHTML = avatarHtml({
+    name: title,
+    hasContact: Boolean(detail.contact),
+    senderType: s.type,
+    size: "size-10 text-sm",
+    extra: "is-accent",
+  }).replace('class="avatar-ph', 'id="chatHeaderAvatar" class="avatar-ph');
+
+  const country = s.countryCode ? `${s.countryZh} ${s.countryCode}` : s.countryZh;
+  const parts = detail.contact
+    ? [s.e164 || detail.phone, country, detail.contact.note || ""]
+    : [s.e164 && s.e164 !== title ? s.e164 : "", country];
+  parts.push(`${detail.messages.length} 条信息`);
+  byId("chatHeaderSub").textContent = parts.filter(Boolean).join(" · ");
+
+  const unreadIndices = detail.messages.filter((m) => m.isUnread && m.onCpe && m.index > 0).map((m) => m.index);
   const markBtn = byId<HTMLButtonElement>("markThreadReadBtn");
   if (unreadIndices.length > 0) {
     markBtn.classList.remove("hidden");
-    markBtn.textContent = `✅ 标为已读 (${unreadIndices.length})`;
+    byId("markThreadReadLabel").textContent = `标为已读 · ${unreadIndices.length}`;
     markBtn.onclick = async () => {
       markBtn.disabled = true;
       try {
-        await apiFetch("/api/read", {
-          method: "POST",
-          body: JSON.stringify({ indices: unreadIndices }),
-        });
-        showToast(`已将 ${unreadIndices.length} 条短信标为已读`, "success");
-        await Promise.all([loadThreads(), openThread(threadKey, { preserveScroll: true })]);
+        await apiFetch("/api/read", { method: "POST", body: JSON.stringify({ indices: unreadIndices }) });
+        showToast(`已将 ${unreadIndices.length} 条标为已读`, "success");
+        await Promise.all([loadThreads(), refreshActiveThread({ preserveScroll: true })]);
       } catch (err) {
         showToast(err instanceof Error ? err.message : String(err), "error");
       } finally {
@@ -649,135 +891,159 @@ async function openThread(
   } else {
     markBtn.classList.add("hidden");
   }
+}
 
+function renderComposerState(detail: UiThreadDetail): void {
   const replyForm = byId("replyForm");
   const banner = byId("nonDialableBanner");
   if (detail.dialable && detail.replyPhone) {
     banner.classList.add("hidden");
     replyForm.classList.remove("hidden");
-    byId("replyTargetHint").textContent = `回复至: ${s.flag} ${detail.replyPhone} (${s.countryZh})`;
+    byId("replyTargetHint").textContent = `发送至 ${detail.replyPhone}`;
   } else {
     replyForm.classList.add("hidden");
     banner.classList.remove("hidden");
   }
+}
 
-  const listEl = byId("messagesList");
-  const prevScroll = listEl.scrollTop;
+function renderMessages(detail: UiThreadDetail, opts: { isSwitch: boolean; preserveScroll: boolean }): void {
+  const prevScroll = messagesList.scrollTop;
+  const wasNearBottom = messagesList.scrollHeight - messagesList.scrollTop - messagesList.clientHeight < 120;
+  const msgs = detail.messages;
+  const GROUP_GAP_MS = 5 * 60 * 1000;
+  const html: string[] = [`<div class="mx-auto max-w-3xl px-5 md:px-8 pt-2 pb-6">`];
+  let lastDay = "";
 
-  listEl.innerHTML = detail.messages
-    .map((m) => {
-      const isOut = m.direction === "out";
-      const align = isOut ? "chat-end" : "chat-start";
-      const bubbleColor = isOut
-        ? "chat-bubble-primary"
-        : "bg-base-100 text-base-content border border-base-300 shadow-xs";
-      const senderLabel = isOut ? "我" : detail.contact?.name || m.phone;
-      const statusBadge =
-        !m.onCpe && m.index > 0
-          ? `<span class="badge badge-ghost badge-xs">仅本地归档</span>`
-          : m.isUnread
-            ? `<span class="badge badge-primary badge-xs">未读</span>`
-            : "";
+  msgs.forEach((m, idx) => {
+    const day = m.date.split(" ")[0] ?? "";
+    if (day !== lastDay) {
+      html.push(`<div class="day-sep">${escapeHtml(formatDayLabel(day))}</div>`);
+      lastDay = day;
+    }
+    const prev = msgs[idx - 1];
+    const next = msgs[idx + 1];
+    const sameAsPrev =
+      prev !== undefined &&
+      prev.direction === m.direction &&
+      (prev.date.split(" ")[0] ?? "") === day &&
+      parseMsgTime(m.date) - parseMsgTime(prev.date) < GROUP_GAP_MS;
+    const sameAsNext =
+      next !== undefined &&
+      next.direction === m.direction &&
+      (next.date.split(" ")[0] ?? "") === day &&
+      parseMsgTime(next.date) - parseMsgTime(m.date) < GROUP_GAP_MS;
 
-      return `
-        <div class="chat ${align} group">
-          <div class="chat-header text-[11px] text-base-content/55 flex items-center gap-1.5 mb-0.5">
-            <span class="font-medium">${escapeHtml(senderLabel)}</span>
-            <time>${escapeHtml(m.date)}</time>
-            ${m.index > 0 ? `<span class="opacity-60">#${m.index}</span>` : ""}
-            ${statusBadge}
-          </div>
+    const isOut = m.direction === "out";
+    const isNew = !opts.isSwitch && !renderedMsgUids.has(m.uid);
+    renderedMsgUids.add(m.uid);
+    const localOnly = !m.onCpe && m.index > 0;
+    const showMeta = !sameAsNext || localOnly || m.isUnread || Boolean(m.verificationCode);
 
-          <div class="chat-bubble ${bubbleColor} text-sm whitespace-pre-wrap break-words max-w-[85%] sm:max-w-[75%]">${linkifyHtml(
-            m.content
-          )}</div>
+    const metaBits = [`<time>${escapeHtml(m.date.split(" ")[1]?.slice(0, 5) ?? "")}</time>`];
+    if (m.isUnread) metaBits.push(`<span class="text-primary font-medium">未读</span>`);
+    if (localOnly) metaBits.push(`<span>仅本地归档</span>`);
 
-          <div class="chat-footer mt-1 flex items-center gap-2">
-            ${
-              m.verificationCode
-                ? `<button data-msg-otp="${escapeHtml(
-                    m.verificationCode
-                  )}" class="btn btn-xs btn-secondary btn-outline gap-1">🔑 复制验证码 ${escapeHtml(
-                    m.verificationCode
-                  )}</button>`
-                : ""
-            }
-            <button
-              data-del-uid="${escapeHtml(m.uid)}"
-              data-del-index="${m.onCpe ? m.index : 0}"
-              class="btn btn-ghost btn-xs opacity-0 group-hover:opacity-100 text-error/70 hover:text-error transition-opacity"
-              title="删除此条短信"
-            >
-              🗑 删除
-            </button>
-          </div>
+    const delBtn = `
+      <button type="button" data-del-uid="${escapeHtml(m.uid)}" data-del-index="${m.onCpe ? m.index : 0}"
+        class="reveal-on-hover btn btn-ghost btn-xs btn-circle text-base-content/40 hover:text-error shrink-0" title="删除" aria-label="删除">
+        ${icon("trash", "text-sm")}
+      </button>`;
+
+    html.push(`
+      <div class="group flex flex-col ${isOut ? "items-end" : "items-start"} ${sameAsPrev ? "mt-0.5" : "mt-3"} ${
+        isNew ? `anim-pop-in ${isOut ? "from-right" : "from-left"}` : ""
+      }" data-msg-uid="${escapeHtml(m.uid)}">
+        <div class="flex items-center gap-1.5 max-w-[85%] sm:max-w-[72%] ${isOut ? "flex-row-reverse" : ""}">
+          <div class="bubble ${isOut ? "bubble-out" : "bubble-in"} ${sameAsPrev ? "join-top" : ""} ${
+            sameAsNext ? "join-bottom" : ""
+          }" title="${escapeHtml(m.date)}">${linkifyHtml(m.content)}</div>
+          ${delBtn}
         </div>
-      `;
-    })
-    .join("");
-
-  listEl.querySelectorAll<HTMLButtonElement>("[data-msg-otp]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const otp = btn.getAttribute("data-msg-otp") || "";
-      void copyText(otp, "验证码已复制");
-    });
+        ${m.verificationCode ? `<div class="mt-1.5">${otpChipHtml(m.verificationCode, "data-msg-otp", true)}</div>` : ""}
+        ${showMeta ? `<div class="mt-1 px-1.5 flex items-center gap-1.5 text-[11px] text-base-content/40">${metaBits.join("<span>·</span>")}</div>` : ""}
+      </div>`);
   });
+  html.push(`</div>`);
+  messagesList.innerHTML = html.join("");
 
-  listEl.querySelectorAll<HTMLButtonElement>("[data-del-uid]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const uid = btn.getAttribute("data-del-uid") || "";
-      const idx = Number(btn.getAttribute("data-del-index"));
-      const msg =
-        idx > 0
-          ? "确定从 CPE 路由器和本地历史中删除这条短信吗？"
-          : "确定从本地归档记录中删除这条短信吗？";
-      if (!confirm(msg)) return;
-      try {
-        await apiFetch("/api/delete", {
-          method: "POST",
-          body: JSON.stringify({
-            indices: idx > 0 ? [idx] : [],
-            uids: [uid],
-            deleteFromCpe: idx > 0,
-            deleteFromArchive: true,
-          }),
-        });
-        showToast("已删除短信", "success");
-        await Promise.all([loadThreads(), openThread(threadKey, { preserveScroll: true })]);
-      } catch (err) {
-        showToast(err instanceof Error ? err.message : String(err), "error");
-      }
-    });
-  });
-
-  if (opts.preserveScroll) {
-    listEl.scrollTop = prevScroll;
+  if (opts.isSwitch || !opts.preserveScroll) {
+    if (!opts.isSwitch && wasNearBottom) {
+      messagesList.scrollTo({ top: messagesList.scrollHeight, behavior: "smooth" });
+    } else {
+      messagesList.scrollTop = messagesList.scrollHeight;
+    }
   } else {
-    listEl.scrollTop = listEl.scrollHeight;
+    messagesList.scrollTop = prevScroll;
   }
 }
 
-// Edit Contact Nickname from Active Chat Header
+messagesList.addEventListener("click", (e) => {
+  const target = e.target as HTMLElement;
+  const otpBtn = target.closest<HTMLElement>("[data-msg-otp]");
+  if (otpBtn) {
+    const code = otpBtn.getAttribute("data-msg-otp") || "";
+    void copyText(code, "验证码已复制").then((ok) => ok && flashCopied(otpBtn));
+    return;
+  }
+  const delBtn = target.closest<HTMLElement>("[data-del-uid]");
+  if (delBtn) void deleteMessage(delBtn);
+});
+
+async function deleteMessage(btn: HTMLElement): Promise<void> {
+  const uid = btn.getAttribute("data-del-uid") || "";
+  const idx = Number(btn.getAttribute("data-del-index"));
+  const msg = idx > 0 ? "确定从 CPE 路由器和本地历史中删除这条短信吗？" : "确定从本地归档中删除这条短信吗？";
+  if (!confirm(msg)) return;
+  try {
+    await apiFetch("/api/delete", {
+      method: "POST",
+      body: JSON.stringify({
+        indices: idx > 0 ? [idx] : [],
+        uids: [uid],
+        deleteFromCpe: idx > 0,
+        deleteFromArchive: true,
+      }),
+    });
+    const row = btn.closest<HTMLElement>("[data-msg-uid]");
+    if (row) {
+      row.style.transition = "opacity .2s ease, transform .2s ease";
+      row.style.opacity = "0";
+      row.style.transform = "scale(.96)";
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    showToast("已删除", "success");
+    await Promise.all([loadThreads(), refreshActiveThread({ preserveScroll: true })]);
+  } catch (err) {
+    showToast(err instanceof Error ? err.message : String(err), "error");
+  }
+}
+
 byId("editNicknameBtn").addEventListener("click", () => {
   if (!state.activeThread) return;
-  const currentPhone = state.activeThread.sender.e164 || state.activeThread.phone;
-  const currentName = state.activeThread.contact?.name || "";
-  const modal = byId<HTMLDialogElement>("contactsModal");
-  byId<HTMLInputElement>("manualContactPhone").value = currentPhone;
-  byId<HTMLInputElement>("manualContactName").value = currentName;
-  byId<HTMLInputElement>("manualContactNote").value = state.activeThread.contact?.note || "";
-  modal.showModal();
-  setTimeout(() => byId<HTMLInputElement>("manualContactName").focus(), 50);
+  openContactsModal({
+    phone: state.activeThread.sender.e164 || state.activeThread.phone,
+    name: state.activeThread.contact?.name || "",
+    note: state.activeThread.contact?.note || "",
+  });
 });
 
-// Reply Composer Submit
+// Reply composer
 const replyTextarea = byId<HTMLTextAreaElement>("replyTextarea");
-replyTextarea.addEventListener("input", () => {
-  const info = estimateLocalSmsMode(replyTextarea.value);
-  byId("replyEncodingHint").textContent =
-    `${info.encoding} · ${info.len} 字 · 预计 ${info.segments} 条`;
-});
+const replySendBtn = byId<HTMLButtonElement>("replySendBtn");
 
+function autoGrow(el: HTMLTextAreaElement): void {
+  el.style.height = "auto";
+  el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+}
+
+function syncReplyComposer(): void {
+  autoGrow(replyTextarea);
+  const hasText = replyTextarea.value.trim().length > 0;
+  replySendBtn.disabled = !hasText;
+  byId("replyEncodingHint").textContent = hasText ? describeSmsMode(replyTextarea.value) : "";
+}
+
+replyTextarea.addEventListener("input", syncReplyComposer);
 replyTextarea.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
     e.preventDefault();
@@ -791,9 +1057,8 @@ byId<HTMLFormElement>("replyForm").addEventListener("submit", async (e) => {
   const text = replyTextarea.value.trim();
   if (!text) return;
 
-  const btn = byId<HTMLButtonElement>("replySendBtn");
-  btn.disabled = true;
-  btn.textContent = "发送中...";
+  replySendBtn.disabled = true;
+  replySendBtn.innerHTML = `<span class="loading loading-spinner loading-xs"></span>`;
 
   try {
     await apiFetch("/api/send", {
@@ -805,100 +1070,100 @@ byId<HTMLFormElement>("replyForm").addEventListener("submit", async (e) => {
       }),
     });
     replyTextarea.value = "";
-    byId("replyEncodingHint").textContent = "GSM 7-bit · 0 字";
-    showToast(`✅ 短信已成功发送至 ${state.activeThread.replyPhone}`, "success");
-    if (state.selectedThreadKey) {
-      await Promise.all([
-        loadThreads(),
-        openThread(state.selectedThreadKey, { preserveScroll: false }),
-      ]);
-    }
+    showToast(`已发送至 ${state.activeThread.replyPhone}`, "success");
+    await Promise.all([loadThreads(), refreshActiveThread({ preserveScroll: false })]);
   } catch (err) {
-    showToast(`发送失败: ${err instanceof Error ? err.message : String(err)}`, "error");
+    showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`, "error");
   } finally {
-    btn.disabled = false;
-    btn.textContent = "发送";
+    replySendBtn.innerHTML = icon("arrow-up", "text-base");
+    replySendBtn.querySelector("svg")?.setAttribute("style", "stroke-width:2.25");
+    syncReplyComposer();
   }
 });
 
-// --- Guided New SMS Modal ---
+// =====================================================================
+// New message modal
+// =====================================================================
 function populateCountrySelect(): void {
   const sel = byId<HTMLSelectElement>("newSmsCountrySelect");
   sel.innerHTML = state.countries
     .map(
       (c) =>
-        `<option value="${escapeHtml(c.code)}" ${
-          c.code === state.defaultCountryCode ? "selected" : ""
-        }>${c.flag} ${escapeHtml(c.nameZh)} (${escapeHtml(c.code)})</option>`
+        `<option value="${escapeHtml(c.code)}" ${c.code === state.defaultCountryCode ? "selected" : ""}>${escapeHtml(
+          c.nameZh
+        )} ${escapeHtml(c.code)}</option>`
     )
     .join("");
 }
 
 function openNewSmsModal(): void {
-  const modal = byId<HTMLDialogElement>("newSmsModal");
-  modal.showModal();
+  byId<HTMLDialogElement>("newSmsModal").showModal();
   updateNewSmsPreview();
-  setTimeout(() => byId<HTMLInputElement>("newSmsPhoneInput").focus(), 50);
+  setTimeout(() => byId<HTMLInputElement>("newSmsPhoneInput").focus(), 60);
 }
 
 byId("newSmsBtn").addEventListener("click", openNewSmsModal);
 byId("emptyNewSmsBtn").addEventListener("click", openNewSmsModal);
 
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
+
+function pickSuggestedPhone(phone: string): void {
+  byId<HTMLInputElement>("newSmsPhoneInput").value = phone;
+  byId("newSmsContactSuggestions").classList.add("hidden");
+  updateNewSmsPreview();
+  byId<HTMLTextAreaElement>("newSmsContentInput").focus();
+}
+
 function updateNewSmsPreview(): void {
-  const countryCode =
-    byId<HTMLSelectElement>("newSmsCountrySelect").value || state.defaultCountryCode;
+  const countryCode = byId<HTMLSelectElement>("newSmsCountrySelect").value || state.defaultCountryCode;
   const rawPhone = byId<HTMLInputElement>("newSmsPhoneInput").value.trim();
   const content = byId<HTMLTextAreaElement>("newSmsContentInput").value;
   const sugBox = byId("newSmsContactSuggestions");
   const prevBox = byId("newSmsResolvedPreview");
 
-  const mode = estimateLocalSmsMode(content);
-  byId("newSmsModeHint").textContent =
-    `${mode.encoding} · ${mode.len} 字 · 预计 ${mode.segments || 1} 条`;
+  byId("newSmsModeHint").textContent = describeSmsMode(content);
 
-  if (rawPhone) {
-    const q = rawPhone.toLowerCase();
-    const hits = state.contacts
-      .filter(
-        (c) =>
-          c.name.toLowerCase().includes(q) ||
-          c.phones.some((p) => p.toLowerCase().includes(q))
-      )
-      .slice(0, 5);
+  if (!rawPhone) {
+    sugBox.classList.add("hidden");
+    prevBox.innerHTML = `${icon("info")}<span>默认区号 ${escapeHtml(countryCode)}，可直接输入本地号码或带 + 的国际号码</span>`;
+    return;
+  }
 
-    if (hits.length > 0) {
-      sugBox.classList.remove("hidden");
-      sugBox.innerHTML = hits
-        .map((c) =>
-          c.phones
-            .slice(0, 2)
-            .map(
-              (ph) =>
-                `<button type="button" data-pick-phone="${escapeHtml(
-                  ph
-                )}" class="btn btn-xs btn-soft btn-primary">👤 ${escapeHtml(
-                  c.name
-                )} (${escapeHtml(ph)})</button>`
-            )
-            .join("")
+  const q = rawPhone.toLowerCase();
+  const hits = state.contacts
+    .filter((c) => c.name.toLowerCase().includes(q) || c.phones.some((p) => p.toLowerCase().includes(q)))
+    .slice(0, 5);
+
+  const showSuggestions = hits.length > 0 && !hits.some((c) => c.phones.includes(rawPhone));
+  if (showSuggestions) {
+    sugBox.classList.remove("hidden");
+    sugBox.innerHTML = hits
+      .flatMap((c) =>
+        c.phones.slice(0, 2).map(
+          (ph, idx) => `
+          <button type="button" data-pick-phone="${escapeHtml(ph)}"
+            class="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-left transition-colors anim-fade ${
+              idx === 0 && c === hits[0] ? "bg-primary/10 hover:bg-primary/15" : "hover:bg-base-200"
+            }">
+            ${avatarHtml({ name: c.name, hasContact: true, senderType: "national", size: "size-7 text-[11px]", extra: idx === 0 && c === hits[0] ? "is-accent" : "" })}
+            <span class="text-sm font-medium truncate">${escapeHtml(c.name)}</span>
+            <span class="ml-auto text-xs font-mono muted">${escapeHtml(ph)}</span>
+          </button>`
         )
-        .join("");
-      sugBox.querySelectorAll<HTMLButtonElement>("[data-pick-phone]").forEach((b) => {
-        b.addEventListener("click", () => {
-          byId<HTMLInputElement>("newSmsPhoneInput").value =
-            b.getAttribute("data-pick-phone") || "";
-          sugBox.classList.add("hidden");
-          updateNewSmsPreview();
-          byId<HTMLTextAreaElement>("newSmsContentInput").focus();
-        });
-      });
-    } else {
-      sugBox.classList.add("hidden");
-    }
+      )
+      .join("");
   } else {
     sugBox.classList.add("hidden");
-    prevBox.textContent = `当前默认区号 ${countryCode}：可直接输入爱尔兰本地号 (如 0831234567) 或带 + 国际号码`;
+  }
+
+  // When searching by contact name, guide calmly instead of flashing an invalid-phone warning
+  if (isLikelyContactNameQuery(rawPhone)) {
+    if (previewTimer) clearTimeout(previewTimer);
+    if (hits.length > 0) {
+      prevBox.innerHTML = `${icon("check", "text-primary")}<span>按回车选择「${escapeHtml(hits[0]!.name)}」，或点击上方联系人</span>`;
+    } else {
+      prevBox.innerHTML = `${icon("info")}<span>未找到匹配的联系人，请输入完整手机号码</span>`;
+    }
     return;
   }
 
@@ -906,18 +1171,18 @@ function updateNewSmsPreview(): void {
   previewTimer = setTimeout(() => {
     void (async () => {
       try {
-        const res = await apiFetch("/api/sms/preview", {
+        const res = await apiFetch<PreviewApiResponse>("/api/sms/preview", {
           method: "POST",
           body: JSON.stringify({ phone: rawPhone, countryCode, content }),
         });
         const r = res.data.recipient;
-        if (r?.ok) {
-          prevBox.innerHTML = `✅ 将发送至：<b>${r.flag} ${escapeHtml(r.countryZh)}</b> · <code class="font-mono font-bold">${escapeHtml(
+        if (r?.ok && r.phone) {
+          prevBox.innerHTML = `${icon("check", "text-success")}<span>发送至 ${escapeHtml(r.countryZh ?? "")} · <span class="font-mono font-semibold text-base-content/85">${escapeHtml(
             r.phone
-          )}</code>`;
+          )}</span></span>`;
         } else {
-          prevBox.innerHTML = `<span class="text-warning">⚠️ ${escapeHtml(
-            r?.error || "请输入有效号码或点击上方匹配的联系人"
+          prevBox.innerHTML = `${icon("alert", "text-warning")}<span class="text-warning">${escapeHtml(
+            r?.error || "请输入有效号码或选择联系人"
           )}</span>`;
         }
       } catch {
@@ -927,128 +1192,207 @@ function updateNewSmsPreview(): void {
   }, 150);
 }
 
+byId("newSmsContactSuggestions").addEventListener("click", (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLElement>("[data-pick-phone]");
+  const picked = b?.getAttribute("data-pick-phone");
+  if (picked) pickSuggestedPhone(picked);
+});
+
+byId("newSmsPhoneInput").addEventListener("keydown", (e) => {
+  const ke = e as KeyboardEvent;
+  if (ke.key === "Enter" || ke.key === "Tab") {
+    const firstSuggestion = byId("newSmsContactSuggestions").querySelector<HTMLElement>("[data-pick-phone]");
+    const raw = byId<HTMLInputElement>("newSmsPhoneInput").value;
+    const phone = firstSuggestion?.getAttribute("data-pick-phone");
+    if (phone && !byId("newSmsContactSuggestions").classList.contains("hidden") && isLikelyContactNameQuery(raw)) {
+      ke.preventDefault();
+      pickSuggestedPhone(phone);
+    }
+  }
+});
+
 byId("newSmsCountrySelect").addEventListener("change", updateNewSmsPreview);
 byId("newSmsPhoneInput").addEventListener("input", updateNewSmsPreview);
 byId("newSmsContentInput").addEventListener("input", updateNewSmsPreview);
+byId("newSmsContentInput").addEventListener("keydown", (e) => {
+  const ke = e as KeyboardEvent;
+  if ((ke.metaKey || ke.ctrlKey) && ke.key === "Enter") {
+    ke.preventDefault();
+    byId<HTMLFormElement>("newSmsForm").requestSubmit();
+  }
+});
 
 byId<HTMLFormElement>("newSmsForm").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const countryCode =
-    byId<HTMLSelectElement>("newSmsCountrySelect").value || state.defaultCountryCode;
+  const countryCode = byId<HTMLSelectElement>("newSmsCountrySelect").value || state.defaultCountryCode;
   const phone = byId<HTMLInputElement>("newSmsPhoneInput").value.trim();
   const content = byId<HTMLTextAreaElement>("newSmsContentInput").value.trim();
   const btn = byId<HTMLButtonElement>("newSmsSubmitBtn");
+  const btnHtml = btn.innerHTML;
 
   btn.disabled = true;
-  btn.textContent = "正在通过 CPE 发送...";
+  btn.innerHTML = `<span class="loading loading-spinner loading-xs"></span>发送中`;
 
   try {
-    const res = await apiFetch("/api/send", {
+    const res = await apiFetch<SendApiResponse>("/api/send", {
       method: "POST",
       body: JSON.stringify({ phone, countryCode, content }),
     });
-    const sentTo = (res.data.resolvedPhones?.[0] as string) || phone;
-    showToast(`✅ 短信已成功发送至 ${sentTo}`, "success");
+    const sentTo = res.data.resolvedPhones?.[0] || phone;
+    showToast(`已发送至 ${sentTo}`, "success");
     byId<HTMLInputElement>("newSmsPhoneInput").value = "";
     byId<HTMLTextAreaElement>("newSmsContentInput").value = "";
     byId<HTMLDialogElement>("newSmsModal").close();
     await loadThreads();
     await openThread(sentTo);
   } catch (err) {
-    showToast(`发送失败: ${err instanceof Error ? err.message : String(err)}`, "error");
+    showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`, "error");
   } finally {
     btn.disabled = false;
-    btn.textContent = "🚀 立即发送";
+    btn.innerHTML = btnHtml;
   }
 });
 
-// --- Contacts Book & iPhone `.vcf` Import ---
+// =====================================================================
+// Contacts & iPhone `.vcf` import
+// =====================================================================
 async function loadContactsBook(search = ""): Promise<void> {
-  const res = await apiFetch(`/api/contacts/book?search=${encodeURIComponent(search)}`);
-  state.contacts = (res.data.contacts as ContactEntry[]) || [];
-  byId("contactsCountBadge").textContent = String(res.data.total ?? 0);
+  const res = await apiFetch<ContactsBookApiResponse>(`/api/contacts/book?search=${encodeURIComponent(search)}`);
+  state.contacts = res.data.contacts ?? [];
+  const total = res.data.total ?? 0;
+  byId("contactsCountBadge").textContent = total ? String(total) : "";
+  byId("contactsModalCount").textContent = total ? String(total) : "";
   renderContactsList();
 }
 
 function renderContactsList(): void {
   const box = byId("contactsListContainer");
   if (state.contacts.length === 0) {
-    box.innerHTML = `<div class="p-6 text-center text-xs text-base-content/50">暂无联系人，可导入 iPhone .vcf 文件或在上方手动添加</div>`;
+    box.innerHTML = `
+      <div class="flex flex-col items-center gap-2 py-10 text-center anim-fade">
+        ${icon("contacts", "text-3xl text-base-content/15")}
+        <div class="text-sm text-base-content/50">暂无联系人</div>
+        <div class="text-xs text-base-content/40">导入 iPhone 导出的 .vcf，或点击右上角 + 新建</div>
+      </div>`;
     return;
   }
 
   box.innerHTML = state.contacts
     .map(
-      (c) => `
-      <div class="px-3 py-2 flex items-center justify-between gap-2 text-xs hover:bg-base-200/50">
-        <div class="min-w-0">
-          <div class="font-semibold truncate">
-            👤 ${escapeHtml(c.name)}
-            ${c.note ? `<span class="text-base-content/50 font-normal">(${escapeHtml(c.note)})</span>` : ""}
-          </div>
-          <div class="font-mono text-base-content/60 truncate">${escapeHtml(c.phones.join(" · "))}</div>
+      (c, i) => `
+      <div class="group flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-base-200/70 transition-colors anim-rise" style="--i:${i}">
+        ${avatarHtml({ name: c.name, hasContact: true, senderType: "national", size: "size-9 text-xs" })}
+        <div class="min-w-0 flex-1">
+          <div class="text-sm font-medium truncate">${escapeHtml(c.name)}${
+            c.note ? `<span class="ml-1.5 font-normal text-base-content/40">${escapeHtml(c.note)}</span>` : ""
+          }</div>
+          <div class="text-xs font-mono text-base-content/50 truncate">${escapeHtml(c.phones.join(" · "))}</div>
         </div>
-        <div class="flex items-center gap-1 shrink-0">
-          <button data-compose-to="${escapeHtml(c.phones[0] || "")}" class="btn btn-xs btn-ghost text-primary">
-            发短信
-          </button>
-          <button data-del-contact="${escapeHtml(c.id)}" class="btn btn-xs btn-ghost text-error/70">
-            删除
-          </button>
+        <div class="flex items-center gap-0.5 shrink-0 reveal-on-hover">
+          <button type="button" data-compose-to="${escapeHtml(c.phones[0] || "")}" class="btn btn-ghost btn-xs btn-square rounded-lg" title="发信息" aria-label="发信息">${icon(
+            "message",
+            "text-sm"
+          )}</button>
+          <button type="button" data-edit-contact="${escapeHtml(c.id)}" class="btn btn-ghost btn-xs btn-square rounded-lg" title="编辑" aria-label="编辑">${icon(
+            "pencil",
+            "text-sm"
+          )}</button>
+          <button type="button" data-del-contact="${escapeHtml(c.id)}" class="btn btn-ghost btn-xs btn-square rounded-lg hover:text-error" title="删除" aria-label="删除">${icon(
+            "trash",
+            "text-sm"
+          )}</button>
         </div>
-      </div>
-    `
+      </div>`
     )
     .join("");
-
-  box.querySelectorAll<HTMLButtonElement>("[data-compose-to]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      byId<HTMLDialogElement>("contactsModal").close();
-      byId<HTMLInputElement>("newSmsPhoneInput").value = btn.getAttribute("data-compose-to") || "";
-      openNewSmsModal();
-    });
-  });
-
-  box.querySelectorAll<HTMLButtonElement>("[data-del-contact]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const id = btn.getAttribute("data-del-contact") || "";
-      await apiFetch(`/api/contacts/book/${encodeURIComponent(id)}`, { method: "DELETE" });
-      await Promise.all([loadContactsBook(), loadThreads()]);
-    });
-  });
 }
 
-byId("contactsModalBtn").addEventListener("click", async () => {
-  await loadContactsBook();
-  byId<HTMLDialogElement>("contactsModal").showModal();
+byId("contactsListContainer").addEventListener("click", (e) => {
+  const target = e.target as HTMLElement;
+  const compose = target.closest<HTMLElement>("[data-compose-to]");
+  if (compose) {
+    byId<HTMLDialogElement>("contactsModal").close();
+    byId<HTMLInputElement>("newSmsPhoneInput").value = compose.getAttribute("data-compose-to") || "";
+    openNewSmsModal();
+    return;
+  }
+  const edit = target.closest<HTMLElement>("[data-edit-contact]");
+  if (edit) {
+    const c = state.contacts.find((x) => x.id === edit.getAttribute("data-edit-contact"));
+    if (c) showContactForm({ phone: c.phones[0] || "", name: c.name, note: c.note || "" });
+    return;
+  }
+  const del = target.closest<HTMLElement>("[data-del-contact]");
+  if (del) {
+    const id = del.getAttribute("data-del-contact") || "";
+    const c = state.contacts.find((x) => x.id === id);
+    if (!confirm(`删除联系人「${c?.name ?? ""}」？`)) return;
+    void (async () => {
+      await apiFetch(`/api/contacts/book/${encodeURIComponent(id)}`, { method: "DELETE" });
+      await Promise.all([loadContactsBook(), loadThreads()]);
+    })();
+  }
 });
 
+function showContactForm(prefill?: { phone: string; name: string; note: string }): void {
+  const form = byId<HTMLFormElement>("manualContactForm");
+  form.classList.remove("hidden");
+  restartAnimation(form, "anim-pop-in");
+  if (prefill) {
+    byId<HTMLInputElement>("manualContactPhone").value = prefill.phone;
+    byId<HTMLInputElement>("manualContactName").value = prefill.name;
+    byId<HTMLInputElement>("manualContactNote").value = prefill.note;
+  }
+  setTimeout(() => byId<HTMLInputElement>("manualContactName").focus(), 60);
+}
+
+function openContactsModal(prefill?: { phone: string; name: string; note: string }): void {
+  const form = byId<HTMLFormElement>("manualContactForm");
+  if (prefill) {
+    showContactForm(prefill);
+  } else {
+    form.classList.add("hidden");
+  }
+  byId<HTMLDialogElement>("contactsModal").showModal();
+  void loadContactsBook(byId<HTMLInputElement>("contactsSearchInput").value);
+}
+
+byId("contactsModalBtn").addEventListener("click", () => {
+  navDrawer.checked = false;
+  openContactsModal();
+});
+
+byId("toggleAddContactBtn").addEventListener("click", () => {
+  const form = byId<HTMLFormElement>("manualContactForm");
+  if (form.classList.contains("hidden")) {
+    form.reset();
+    showContactForm();
+  } else {
+    form.classList.add("hidden");
+  }
+});
+
+let contactsSearchTimer: ReturnType<typeof setTimeout> | null = null;
 byId<HTMLInputElement>("contactsSearchInput").addEventListener("input", (e) => {
-  void loadContactsBook((e.target as HTMLInputElement).value);
+  const q = (e.target as HTMLInputElement).value;
+  if (contactsSearchTimer) clearTimeout(contactsSearchTimer);
+  contactsSearchTimer = setTimeout(() => void loadContactsBook(q), 150);
 });
 
 byId<HTMLFormElement>("manualContactForm").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const phoneInput = byId<HTMLInputElement>("manualContactPhone");
-  const nameInput = byId<HTMLInputElement>("manualContactName");
-  const noteInput = byId<HTMLInputElement>("manualContactNote");
-  const phone = phoneInput.value.trim();
-  const name = nameInput.value.trim();
-  const note = noteInput.value.trim();
+  const form = e.target as HTMLFormElement;
+  const phone = byId<HTMLInputElement>("manualContactPhone").value.trim();
+  const name = byId<HTMLInputElement>("manualContactName").value.trim();
+  const note = byId<HTMLInputElement>("manualContactNote").value.trim();
 
   try {
-    await apiFetch("/api/contacts/book", {
-      method: "POST",
-      body: JSON.stringify({ phone, name, note }),
-    });
-    phoneInput.value = "";
-    nameInput.value = "";
-    noteInput.value = "";
-    showToast(`已保存联系人: ${name}`, "success");
+    await apiFetch("/api/contacts/book", { method: "POST", body: JSON.stringify({ phone, name, note }) });
+    form.reset();
+    form.classList.add("hidden");
+    showToast(`已保存联系人 ${name}`, "success");
     await Promise.all([loadContactsBook(), loadThreads()]);
-    if (state.selectedThreadKey) {
-      await openThread(state.selectedThreadKey, { preserveScroll: true });
-    }
+    await refreshActiveThread({ preserveScroll: true });
   } catch (err) {
     showToast(err instanceof Error ? err.message : String(err), "error");
   }
@@ -1060,27 +1404,49 @@ byId<HTMLInputElement>("vcfFileInput").addEventListener("change", async (e) => {
   if (!file) return;
   try {
     const vcf = await file.text();
-    const res = await apiFetch("/api/contacts/import-vcf", {
+    const res = await apiFetch<ImportVcfApiResponse>("/api/contacts/import-vcf", {
       method: "POST",
       body: JSON.stringify({ vcf }),
     });
     const s = res.data;
-    showToast(
-      `📇 导入完成！解析 ${s.parsed} 条，新增 ${s.added} 位，更新 ${s.updated} 位（共 ${s.total} 位）`,
-      "success"
-    );
+    showToast(`导入完成：解析 ${s.parsed}，新增 ${s.added}，更新 ${s.updated}（共 ${s.total} 位）`, "success");
     await Promise.all([loadContactsBook(), loadThreads()]);
-    if (state.selectedThreadKey) {
-      await openThread(state.selectedThreadKey, { preserveScroll: true });
-    }
+    await refreshActiveThread({ preserveScroll: true });
   } catch (err) {
-    showToast(`导入失败: ${err instanceof Error ? err.message : String(err)}`, "error");
+    showToast(`导入失败：${err instanceof Error ? err.message : String(err)}`, "error");
   } finally {
     input.value = "";
   }
 });
 
-// --- Initial Bootstrap ---
+// =====================================================================
+// Keyboard shortcuts
+// =====================================================================
+document.addEventListener("keydown", (e) => {
+  if (!state.authenticated) return;
+  const target = e.target as HTMLElement;
+  const typing = target.closest("input, textarea, select, [contenteditable='true']") !== null;
+  const modalOpen = document.querySelector("dialog[open]") !== null;
+
+  if (e.key === "Escape" && !modalOpen && appView.getAttribute("data-mobile-view") === "chat" && !typing) {
+    setMobileChatVisible(false);
+    return;
+  }
+  if (typing || modalOpen || e.metaKey || e.ctrlKey || e.altKey) return;
+
+  if (e.key === "n" || e.key === "N") {
+    e.preventDefault();
+    openNewSmsModal();
+  } else if (e.key === "/") {
+    e.preventDefault();
+    setMobileChatVisible(false);
+    byId<HTMLInputElement>("searchInput").focus();
+  }
+});
+
+// =====================================================================
+// Bootstrap
+// =====================================================================
 void (async function init(): Promise<void> {
   try {
     const res = (await fetch("/api/auth/check").then((r) => r.json())) as {
@@ -1097,5 +1463,3 @@ void (async function init(): Promise<void> {
     showLoginScreen();
   }
 })();
-
-export {};

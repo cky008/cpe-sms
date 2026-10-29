@@ -1,341 +1,401 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="sujian-light" data-accent="default">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>H168-383 短信中心 · 实时消息台</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="color-scheme" content="light dark" />
+  <title>短信 · H168-383 实时短信中心</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <script>
+    (function () {
+      try {
+        var known = ["sujian-light", "sujian-dark", "sujian-paper", "sujian-midnight"];
+        var theme = localStorage.getItem("cpe_sms_theme") || "sujian-light";
+        var follow = localStorage.getItem("cpe_sms_follow_system") !== "0";
+        var accent = localStorage.getItem("cpe_sms_accent") || "default";
+        if (follow) theme = matchMedia("(prefers-color-scheme: dark)").matches ? "sujian-dark" : "sujian-light";
+        if (known.indexOf(theme) < 0) theme = "sujian-light";
+        document.documentElement.setAttribute("data-theme", theme);
+        document.documentElement.setAttribute("data-accent", accent);
+      } catch (e) {}
+    })();
+  </script>
   <link rel="stylesheet" href="/app.css" />
 </head>
-<body class="bg-base-200 text-base-content h-dvh overflow-hidden flex flex-col antialiased">
+<body class="bg-base-100 text-base-content h-dvh overflow-hidden antialiased">
 
-  <!-- Toast Container -->
-  <div id="toastContainer" class="toast toast-top toast-end z-[100] pointer-events-none"></div>
+  <!-- Stroke SVG icon sprite (inherits currentColor, zero emoji) -->
+  <svg xmlns="http://www.w3.org/2000/svg" class="hidden" aria-hidden="true">
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
+    <symbol id="i-unread" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r="1" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-contacts" viewBox="0 0 24 24"><path d="M16 2v2"/><path d="M8 2v2"/><path d="M7 22v-2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2"/><circle cx="12" cy="11" r="3"/><rect x="3" y="4" width="18" height="18" rx="2"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+    <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+    <symbol id="i-palette" viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r="1" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r="1" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r="1" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r="1" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7.5"/><path d="m20.5 20.5-4.2-4.2"/></symbol>
+    <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></symbol>
+    <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></symbol>
+    <symbol id="i-check-check" viewBox="0 0 24 24"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h10"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></symbol>
+  </svg>
 
-  <!-- 1. Login View -->
-  <main id="loginView" class="hidden flex-1 flex items-center justify-center p-4">
-    <div class="card bg-base-100 w-full max-w-md shadow-xl border border-base-300">
-      <div class="card-body gap-4">
-        <div class="flex items-center gap-3">
-          <div class="w-11 h-11 rounded-2xl bg-primary text-primary-content flex items-center justify-center text-xl font-bold shadow">
-            5G
-          </div>
-          <div>
-            <h1 class="card-title text-lg">H168-383 实时短信中心</h1>
-            <p class="text-xs text-base-content/60">Huawei 5G CPE Ultra 6 · 本地历史与实时收发</p>
-          </div>
+  <!-- Toasts -->
+  <div id="toastContainer" class="toast toast-top toast-center z-[100] pointer-events-none"></div>
+
+  <!-- 1. Login -->
+  <main id="loginView" class="hidden relative h-dvh bg-base-200 flex items-center justify-center p-6">
+    <button
+      id="loginAppearanceBtn"
+      type="button"
+      class="btn btn-ghost btn-sm btn-square rounded-lg absolute right-5 top-5 text-base-content/60 hover:text-base-content"
+      title="外观与强调色"
+      aria-label="外观与强调色"
+    >
+      <svg class="ico text-lg"><use href="#i-palette"/></svg>
+    </button>
+
+    <div class="w-full max-w-sm anim-pop-in">
+      <div class="flex flex-col items-center text-center mb-8">
+        <div class="size-16 rounded-[1.25rem] bg-primary text-primary-content grid place-items-center fab-compose">
+          <svg class="ico text-3xl"><use href="#i-message"/></svg>
         </div>
-
-        <form id="loginForm" class="space-y-4 pt-2">
-          <fieldset class="fieldset">
-            <legend class="fieldset-legend">CPE 管理密码 / API Token</legend>
-            <input
-              id="loginPassword"
-              type="password"
-              class="input input-bordered w-full"
-              placeholder="请输入 .env 中配置的 CPE_PASSWORD"
-              autocomplete="current-password"
-              required
-            />
-            <p class="fieldset-label text-xs text-base-content/60">
-              验证通过后将在本浏览器保持安全会话，不抢占路由器管理后台
-            </p>
-          </fieldset>
-          <div id="loginError" class="alert alert-error text-sm py-2 hidden"></div>
-          <button id="loginSubmitBtn" type="submit" class="btn btn-primary w-full">
-            进入短信中心
-          </button>
-        </form>
+        <h1 class="mt-5 text-2xl font-bold tracking-tight">H168-383 实时短信中心</h1>
+        <p class="mt-1.5 text-sm muted">Huawei 5G CPE Ultra 6 · 加密归档与实时收发</p>
       </div>
+
+      <form id="loginForm" class="elevated-card rounded-2xl p-5 space-y-4">
+        <label class="field-soft h-11">
+          <svg class="ico"><use href="#i-lock"/></svg>
+          <input id="loginPassword" type="password" placeholder="CPE 管理密码或 API Token" autocomplete="current-password" required />
+        </label>
+        <div id="loginError" class="hidden text-sm text-error"></div>
+        <button id="loginSubmitBtn" type="submit" class="btn btn-primary w-full rounded-xl">登录</button>
+      </form>
+      <p class="mt-5 text-xs text-center text-base-content/40 flex items-center justify-center gap-1.5">
+        <svg class="ico"><use href="#i-shield"/></svg>
+        会话仅保存在此浏览器，不占用路由器管理后台
+      </p>
     </div>
   </main>
 
-  <!-- 2. Main Real-Time SMS Workspace -->
-  <div id="appView" class="hidden flex-1 flex flex-col h-full overflow-hidden">
+  <!-- 2. Workspace -->
+  <div id="appView" class="hidden h-dvh" data-mobile-view="list">
+    <div class="drawer lg:drawer-open h-full">
+      <input id="navDrawer" type="checkbox" class="drawer-toggle" />
 
-    <!-- Top Navbar -->
-    <header class="navbar bg-base-100 border-b border-base-300 min-h-14 px-3 gap-2 shrink-0">
-      <div class="flex-1 flex items-center gap-2 min-w-0">
-        <button id="mobileBackBtn" class="btn btn-ghost btn-sm btn-circle lg:hidden hidden" title="返回列表">
-          ←
-        </button>
-        <div class="w-8 h-8 rounded-xl bg-primary text-primary-content flex items-center justify-center font-bold text-xs shrink-0">
-          5G
-        </div>
-        <div class="min-w-0">
-          <div class="flex items-center gap-2">
-            <span class="font-bold text-sm sm:text-base truncate">H168-383 短信中心</span>
-            <span id="sseBadge" class="badge badge-xs badge-warning gap-1">连接中</span>
-          </div>
-          <div id="signalSubtitle" class="text-[11px] text-base-content/60 truncate">
-            正在读取设备信号与容量状态...
-          </div>
-        </div>
-      </div>
-
-      <div class="flex-none flex items-center gap-1.5">
-        <button id="newSmsBtn" class="btn btn-primary btn-sm gap-1">
-          <span>✍️</span>
-          <span class="hidden sm:inline">发短信</span>
-        </button>
-
-        <button id="syncAllBtn" class="btn btn-soft btn-sm gap-1" title="从 CPE 拉取全部历史收发件箱短信到本地">
-          <span id="syncIcon">🔄</span>
-          <span class="hidden md:inline">同步历史</span>
-        </button>
-
-        <button id="contactsModalBtn" class="btn btn-ghost btn-sm gap-1" title="管理通讯录或导入 iPhone .vcf">
-          <span>📇</span>
-          <span class="hidden md:inline">通讯录</span>
-          <span id="contactsCountBadge" class="badge badge-xs badge-ghost">0</span>
-        </button>
-
-        <!-- daisyUI Theme Selector -->
-        <div class="dropdown dropdown-end">
-          <div tabindex="0" role="button" class="btn btn-ghost btn-sm px-2" title="切换界面主题">
-            🎨
-          </div>
-          <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-50 w-36 p-1.5 shadow-lg border border-base-300 text-xs">
-            <li><button data-set-theme="light">☀️ 明亮 (Light)</button></li>
-            <li><button data-set-theme="dark">🌙 暗色 (Dark)</button></li>
-            <li><button data-set-theme="nord">❄️ 北欧 (Nord)</button></li>
-            <li><button data-set-theme="emerald">🌿 翡翠 (Emerald)</button></li>
-            <li><button data-set-theme="dim">🌌 柔和暗 (Dim)</button></li>
-            <li><button data-set-theme="cupcake">🧁 纸杯蛋糕</button></li>
-          </ul>
-        </div>
-
-        <button id="logoutBtn" class="btn btn-ghost btn-xs text-base-content/60" title="退出登录">
-          退出
-        </button>
-      </div>
-    </header>
-
-    <!-- Split Workspace -->
-    <div class="flex-1 flex overflow-hidden relative">
-
-      <!-- Left Sidebar: Thread List -->
-      <aside
-        id="sidebarPane"
-        class="w-full lg:w-96 border-r border-base-300 bg-base-100 flex flex-col shrink-0 h-full overflow-hidden"
-      >
-        <div class="p-3 space-y-2.5 border-b border-base-200 shrink-0">
-          <label class="input input-sm input-bordered flex items-center gap-2 w-full">
-            <span class="text-base-content/50">🔍</span>
-            <input
-              id="searchInput"
-              type="search"
-              class="grow"
-              placeholder="搜姓名、号码、国家、内容或验证码..."
-            />
-          </label>
-
-          <div class="flex items-center justify-between gap-2">
-            <div role="tablist" class="tabs tabs-box tabs-xs flex-1">
-              <button role="tab" data-filter="all" class="tab tab-active flex-1">
-                全部 <span id="tabCountAll" class="ml-1 opacity-70">0</span>
-              </button>
-              <button role="tab" data-filter="unread" class="tab flex-1">
-                未读 <span id="tabCountUnread" class="ml-1 text-primary font-semibold">0</span>
-              </button>
-              <button role="tab" data-filter="otp" class="tab flex-1">
-                🔑 验证码
+      <div class="drawer-content flex h-full overflow-hidden">
+        <!-- Thread list -->
+        <section id="listPane" class="relative flex flex-col h-full w-full md:w-[340px] xl:w-[380px] shrink-0 bg-base-100 md:border-r border-base-content/[0.07]">
+          <header class="px-5 pt-6 pb-3 space-y-3.5 shrink-0">
+            <div class="flex items-center gap-2.5">
+              <label for="navDrawer" class="btn btn-ghost btn-sm btn-square -ml-2 lg:hidden" aria-label="打开侧边栏">
+                <svg class="ico text-lg"><use href="#i-menu"/></svg>
+              </label>
+              <svg id="listTitleIcon" class="ico text-[1.4rem] text-primary transition-colors"><use href="#i-inbox"/></svg>
+              <h1 id="listTitle" class="text-[1.625rem] leading-none font-bold tracking-tight">收件箱</h1>
+              <span id="listCount" class="ml-auto text-sm muted tabular-nums"></span>
+              <button id="mobileAppearanceBtn" type="button" class="btn btn-ghost btn-sm btn-square rounded-lg lg:hidden -mr-1 text-base-content/55" aria-label="外观">
+                <svg class="ico text-base"><use href="#i-palette"/></svg>
               </button>
             </div>
-          </div>
-        </div>
+            <label class="field-soft">
+              <svg class="ico"><use href="#i-search"/></svg>
+              <input id="searchInput" type="search" placeholder="搜索姓名、号码、内容或验证码" autocomplete="off" />
+              <kbd class="kbd kbd-xs hidden md:inline-flex opacity-60">/</kbd>
+            </label>
+          </header>
 
-        <!-- Thread Items -->
-        <div id="threadList" class="flex-1 overflow-y-auto divide-y divide-base-200"></div>
+          <div id="threadList" class="flex-1 overflow-y-auto px-2.5 pb-28"></div>
 
-        <!-- Sidebar Footer Stats -->
-        <div class="px-3 py-2 border-t border-base-200 bg-base-200/40 text-[11px] text-base-content/60 flex items-center justify-between shrink-0">
-          <span id="archiveFooterText">本地归档 0 条</span>
-          <span id="cpeCapFooterText">CPE 0 / 500</span>
-        </div>
-      </aside>
+          <button id="newSmsBtn" class="fab-compose btn btn-primary btn-circle size-13 absolute right-5 bottom-6 z-10" title="新信息 (N)" aria-label="新信息">
+            <svg class="ico text-2xl" style="stroke-width:2.25"><use href="#i-plus"/></svg>
+          </button>
+        </section>
 
-      <!-- Right Main Pane: Conversation View -->
-      <section
-        id="chatPane"
-        class="hidden lg:flex flex-1 flex-col bg-base-200/50 h-full overflow-hidden min-w-0"
-      >
-        <!-- Empty Placeholder -->
-        <div id="emptyChatState" class="flex-1 flex flex-col items-center justify-center p-8 text-center gap-4">
-          <div class="w-16 h-16 rounded-3xl bg-base-100 shadow flex items-center justify-center text-3xl">
-            💬
-          </div>
-          <div class="space-y-1 max-w-sm">
-            <h2 class="font-bold text-base">选择一个短信会话开始阅读或回复</h2>
-            <p class="text-xs text-base-content/60">
-              所有新收到的短信和验证码都会通过 SSE 实时推送到此页面，无需手动刷新。支持国家区号识别与 iPhone 通讯录匹配。
+        <!-- Conversation -->
+        <section id="chatPane" class="flex flex-1 min-w-0 flex-col h-full bg-base-100">
+          <div id="emptyChatState" class="flex-1 flex flex-col items-center justify-center gap-5 p-8 text-center anim-fade">
+            <div class="size-20 rounded-[1.75rem] bg-base-200 grid place-items-center text-base-content/25">
+              <svg class="ico text-4xl"><use href="#i-message"/></svg>
+            </div>
+            <div class="space-y-1.5">
+              <h2 class="text-base font-semibold text-base-content/75">未选择对话</h2>
+              <p class="text-sm muted max-w-xs">从左侧选择一个对话。新短信与验证码会实时出现在这里。</p>
+            </div>
+            <div class="flex gap-2">
+              <button id="emptySyncBtn" class="btn btn-ghost btn-sm rounded-lg gap-1.5">
+                <svg class="ico"><use href="#i-refresh"/></svg>同步历史
+              </button>
+              <button id="emptyNewSmsBtn" class="btn btn-primary btn-sm rounded-lg gap-1.5">
+                <svg class="ico"><use href="#i-plus"/></svg>新信息
+              </button>
+            </div>
+            <p class="text-xs text-base-content/35 hidden md:block">
+              <kbd class="kbd kbd-xs">N</kbd> 新信息 · <kbd class="kbd kbd-xs">/</kbd> 搜索
             </p>
           </div>
-          <div class="flex gap-2">
-            <button id="emptySyncBtn" class="btn btn-soft btn-sm">🔄 同步 CPE 全部历史短信</button>
-            <button id="emptyNewSmsBtn" class="btn btn-primary btn-sm">✍️ 发送新短信</button>
-          </div>
-        </div>
 
-        <!-- Active Conversation Container -->
-        <div id="activeChatContainer" class="hidden flex-1 flex flex-col h-full overflow-hidden">
-          <!-- Thread Header -->
-          <div class="bg-base-100 border-b border-base-300 px-4 py-2.5 flex items-center justify-between gap-2 shrink-0">
-            <div class="min-w-0">
-              <div class="flex items-center gap-2 flex-wrap">
-                <span id="chatHeaderFlag" class="text-lg">📱</span>
-                <h2 id="chatHeaderTitle" class="font-bold text-sm sm:text-base truncate"></h2>
-                <span id="chatHeaderCountryBadge" class="badge badge-ghost badge-sm"></span>
+          <div id="activeChatContainer" class="hidden flex-1 flex flex-col min-h-0">
+            <header class="px-5 md:px-7 pt-5 pb-4 flex items-center gap-3 shrink-0 border-b border-base-content/[0.06]">
+              <button id="mobileBackBtn" class="btn btn-ghost btn-sm btn-square -ml-2 md:hidden" aria-label="返回">
+                <svg class="ico text-xl"><use href="#i-chevron-left"/></svg>
+              </button>
+              <div id="chatHeaderAvatar" class="avatar-ph size-10 text-sm"></div>
+              <div class="min-w-0 flex-1">
+                <h2 id="chatHeaderTitle" class="text-lg font-bold tracking-tight truncate leading-tight"></h2>
+                <p id="chatHeaderSub" class="text-xs muted truncate mt-0.5"></p>
               </div>
-              <div id="chatHeaderSub" class="text-xs text-base-content/60 truncate"></div>
+              <div class="flex items-center gap-1 shrink-0">
+                <button id="markThreadReadBtn" class="btn btn-ghost btn-sm rounded-lg gap-1.5 text-primary hidden">
+                  <svg class="ico"><use href="#i-check-check"/></svg>
+                  <span id="markThreadReadLabel">标为已读</span>
+                </button>
+                <div class="tooltip tooltip-bottom" data-tip="编辑联系人">
+                  <button id="editNicknameBtn" class="btn btn-ghost btn-sm btn-square rounded-lg" aria-label="编辑联系人">
+                    <svg class="ico text-base"><use href="#i-pencil"/></svg>
+                  </button>
+                </div>
+              </div>
+            </header>
+
+            <div id="messagesList" class="flex-1 overflow-y-auto"></div>
+
+            <div id="nonDialableBanner" class="hidden px-6 py-4 text-xs muted flex items-center justify-center gap-1.5">
+              <svg class="ico"><use href="#i-info"/></svg>
+              该发送方为运营商或品牌服务号，无法直接回复
             </div>
 
-            <div class="flex items-center gap-1.5 shrink-0">
-              <button id="editNicknameBtn" class="btn btn-ghost btn-xs gap-1" title="给该号码添加或修改姓名备注">
-                ✏️ 备注联系人
-              </button>
-              <button id="markThreadReadBtn" class="btn btn-soft btn-success btn-xs hidden">
-                ✅ 标为已读
-              </button>
+            <form id="replyForm" class="px-4 md:px-6 pb-4 pt-2 shrink-0">
+              <div class="composer mx-auto max-w-3xl">
+                <textarea id="replyTextarea" rows="1" placeholder="信息" aria-label="回复内容"></textarea>
+                <div class="flex items-center gap-2 pl-4 pr-2 pb-2">
+                  <span id="replyTargetHint" class="text-[11px] text-base-content/40 truncate"></span>
+                  <span id="replyEncodingHint" class="ml-auto text-[11px] text-base-content/40 tabular-nums whitespace-nowrap"></span>
+                  <button id="replySendBtn" type="submit" class="btn btn-primary btn-circle btn-sm transition-transform active:scale-90" disabled aria-label="发送" title="发送 (Cmd/Ctrl + Enter)">
+                    <svg class="ico text-base" style="stroke-width:2.25"><use href="#i-arrow-up"/></svg>
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </section>
+      </div>
+
+      <!-- Sidebar -->
+      <div class="drawer-side z-40">
+        <label for="navDrawer" class="drawer-overlay" aria-label="关闭侧边栏"></label>
+        <aside class="w-64 h-full bg-base-200 flex flex-col border-r border-base-content/[0.06]">
+          <div class="px-5 pt-6 pb-5 flex items-center gap-2.5">
+            <div class="size-8 rounded-[0.6rem] bg-primary text-primary-content grid place-items-center">
+              <svg class="ico text-base"><use href="#i-message"/></svg>
+            </div>
+            <div class="leading-tight">
+              <div class="text-sm font-bold">短信</div>
+              <div class="text-[11px] muted">H168-383</div>
             </div>
           </div>
 
-          <!-- Messages Scroll Area -->
-          <div id="messagesList" class="flex-1 overflow-y-auto p-4 space-y-3"></div>
+          <nav class="px-3 space-y-0.5">
+            <button class="nav-item is-active" data-filter="all">
+              <svg class="ico text-primary"><use href="#i-inbox"/></svg>收件箱
+              <span id="navCountAll" class="count"></span>
+            </button>
+            <button class="nav-item" data-filter="unread">
+              <svg class="ico text-warning"><use href="#i-unread"/></svg>未读
+              <span id="navCountUnread" class="count"></span>
+            </button>
+            <button class="nav-item" data-filter="otp">
+              <svg class="ico text-success"><use href="#i-key"/></svg>验证码
+              <span id="navCountOtp" class="count"></span>
+            </button>
+          </nav>
 
-          <!-- Non-dialable Sender Banner -->
-          <div id="nonDialableBanner" class="hidden bg-base-100 border-t border-base-300 p-3">
-            <div class="alert alert-info py-2 text-xs">
-              <span>🏢 该发送方为运营商或品牌字母服务号，不支持直接回复短信。</span>
+          <nav class="px-3 mt-5">
+            <button id="contactsModalBtn" class="nav-item">
+              <svg class="ico text-secondary"><use href="#i-contacts"/></svg>通讯录
+              <span id="contactsCountBadge" class="count"></span>
+            </button>
+          </nav>
+
+          <div class="flex-1"></div>
+
+          <!-- Device status -->
+          <div class="sidebar-card mx-3 mb-3 p-3.5 rounded-xl text-xs space-y-2.5">
+            <div class="flex items-center gap-2">
+              <span id="deviceName" class="font-semibold truncate">H168-383</span>
+              <span class="ml-auto flex items-center gap-1.5 muted">
+                <span id="sseDot" class="live-dot"></span>
+                <span id="sseLabel">连接中</span>
+              </span>
+            </div>
+            <div class="flex items-center gap-2 muted">
+              <span id="signalBars" class="signal-bars" data-level="0"><i></i><i></i><i></i><i></i></span>
+              <span id="signalSubtitle" class="truncate">正在读取信号…</span>
+            </div>
+            <div class="space-y-1.5">
+              <div class="flex justify-between muted">
+                <span>CPE 存储</span>
+                <span id="cpeCapFooterText" class="tabular-nums">– / –</span>
+              </div>
+              <div class="meter"><span id="cpeCapBar" style="width:0%"></span></div>
+            </div>
+            <div id="archiveFooterText" class="text-base-content/45 flex items-center gap-1.5">
+              <svg class="ico"><use href="#i-lock"/></svg><span>本地加密归档 0 条</span>
             </div>
           </div>
 
-          <!-- Reply Composer -->
-          <form id="replyForm" class="bg-base-100 border-t border-base-300 p-3 space-y-2 shrink-0">
-            <div class="flex items-center justify-between text-[11px] text-base-content/60 px-1">
-              <span id="replyTargetHint">发送至: -</span>
-              <span id="replyEncodingHint">GSM 7-bit · 0 字</span>
-            </div>
-            <div class="flex gap-2 items-end">
-              <textarea
-                id="replyTextarea"
-                rows="2"
-                class="textarea textarea-bordered flex-1 text-sm leading-snug resize-none"
-                placeholder="输入回复短信内容（Ctrl/Cmd + Enter 快捷发送）..."
-              ></textarea>
-              <button id="replySendBtn" type="submit" class="btn btn-primary">
-                发送
+          <div class="px-2.5 pb-3 pt-2 flex items-center gap-0.5 border-t border-base-content/[0.06]">
+            <button id="syncAllBtn" class="btn btn-ghost btn-sm rounded-lg flex-1 justify-start gap-2 font-normal" title="从 CPE 拉取全部历史短信">
+              <svg id="syncIcon" class="ico text-base"><use href="#i-refresh"/></svg>同步历史
+            </button>
+            <div class="tooltip" data-tip="外观">
+              <button id="appearanceBtn" class="btn btn-ghost btn-sm btn-square rounded-lg" aria-label="外观">
+                <svg class="ico text-base"><use href="#i-palette"/></svg>
               </button>
             </div>
-          </form>
-        </div>
-      </section>
+            <div class="tooltip" data-tip="退出登录">
+              <button id="logoutBtn" class="btn btn-ghost btn-sm btn-square rounded-lg" aria-label="退出登录">
+                <svg class="ico text-base"><use href="#i-logout"/></svg>
+              </button>
+            </div>
+          </div>
+        </aside>
+      </div>
     </div>
   </div>
 
-  <!-- Modal 1: Guided New SMS -->
-  <dialog id="newSmsModal" class="modal">
-    <div class="modal-box max-w-lg">
-      <form method="dialog">
-        <button class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3">✕</button>
-      </form>
-      <h3 class="font-bold text-lg flex items-center gap-2">✍️ 引导式发送新短信</h3>
-      <p class="text-xs text-base-content/60 mt-1">
-        默认使用爱尔兰区号 (+353)，也可切换其他国家或直接输入带 <code>+</code> 的国际号码。
-      </p>
-
-      <form id="newSmsForm" class="space-y-4 mt-4">
-        <div class="grid grid-cols-1 sm:grid-cols-5 gap-2">
-          <fieldset class="fieldset sm:col-span-2">
-            <legend class="fieldset-legend">默认国家/区号</legend>
-            <select id="newSmsCountrySelect" class="select select-bordered w-full text-sm"></select>
-          </fieldset>
-
-          <fieldset class="fieldset sm:col-span-3">
-            <legend class="fieldset-legend">接收方手机号 / 搜联系人</legend>
-            <input
-              id="newSmsPhoneInput"
-              type="text"
-              class="input input-bordered w-full text-sm"
-              placeholder="如 0831234567 或 +86138... 或输入姓名"
-              required
-            />
-          </fieldset>
+  <!-- Modal: New message -->
+  <dialog id="newSmsModal" class="modal modal-bottom sm:modal-middle">
+    <div class="modal-box p-0 sm:max-w-lg overflow-hidden">
+      <form id="newSmsForm">
+        <div class="flex items-center justify-between px-5 pt-5 pb-3">
+          <h3 class="text-lg font-bold tracking-tight">新信息</h3>
+          <button type="button" data-close-modal class="btn btn-ghost btn-sm btn-circle" aria-label="关闭">
+            <svg class="ico text-base"><use href="#i-x"/></svg>
+          </button>
         </div>
 
-        <!-- Quick Contact Suggestions -->
-        <div id="newSmsContactSuggestions" class="flex flex-wrap gap-1.5 hidden"></div>
-
-        <!-- Resolved Recipient Preview -->
-        <div id="newSmsResolvedPreview" class="bg-base-200 rounded-xl px-3 py-2 text-xs text-base-content/80">
-          等待输入接收方号码...
-        </div>
-
-        <fieldset class="fieldset">
-          <div class="flex justify-between items-center">
-            <legend class="fieldset-legend">短信正文</legend>
-            <span id="newSmsModeHint" class="text-[11px] text-base-content/60">7BIT · 1 条</span>
+        <div class="recipient-bar px-5 pb-3">
+          <div class="flex items-center gap-2.5">
+            <span class="text-sm muted shrink-0">收件人</span>
+            <select id="newSmsCountrySelect" class="bare-select shrink-0" aria-label="国家/区号"></select>
+            <input id="newSmsPhoneInput" type="text" class="bare-input" placeholder="号码或联系人姓名" autocomplete="off" required />
           </div>
-          <textarea
-            id="newSmsContentInput"
-            rows="4"
-            class="textarea textarea-bordered w-full text-sm"
-            placeholder="请输入要发送的短信内容..."
-            required
-          ></textarea>
-        </fieldset>
+          <div id="newSmsContactSuggestions" class="hidden mt-2.5 space-y-0.5"></div>
+          <div id="newSmsResolvedPreview" class="mt-2 min-h-5 text-xs muted flex items-center gap-1.5"></div>
+        </div>
 
-        <div class="modal-action">
-          <button type="button" class="btn btn-ghost" onclick="document.getElementById('newSmsModal').close()">取消</button>
-          <button id="newSmsSubmitBtn" type="submit" class="btn btn-primary">🚀 立即发送</button>
+        <textarea id="newSmsContentInput" rows="5" class="block w-full resize-none border-0 bg-transparent px-5 py-4 text-[15px] leading-relaxed outline-none placeholder:text-base-content/35" placeholder="信息内容" required></textarea>
+
+        <div class="flex items-center justify-between gap-2 px-5 py-3 bg-base-200/50 border-t border-base-content/[0.06]">
+          <span id="newSmsModeHint" class="text-xs muted tabular-nums">GSM-7 · 0 字</span>
+          <div class="flex gap-2">
+            <button type="button" data-close-modal class="btn btn-ghost btn-sm rounded-lg">取消</button>
+            <button id="newSmsSubmitBtn" type="submit" class="btn btn-primary btn-sm rounded-lg gap-1.5">
+              <svg class="ico"><use href="#i-send"/></svg>发送
+            </button>
+          </div>
         </div>
       </form>
     </div>
     <form method="dialog" class="modal-backdrop"><button>close</button></form>
   </dialog>
 
-  <!-- Modal 2: Contacts & iPhone vCard (.vcf) Import -->
-  <dialog id="contactsModal" class="modal">
-    <div class="modal-box max-w-2xl">
-      <form method="dialog">
-        <button class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3">✕</button>
-      </form>
-      <h3 class="font-bold text-lg">📇 本地通讯录与 iPhone 导入</h3>
-      <p class="text-xs text-base-content/60 mt-1">
-        通讯录仅保存在本地 NAS 的 <code>data/contacts.json</code>，绝不上传云端。支持自动匹配 <code>083...</code> 与 <code>+35383...</code>。
-      </p>
-
-      <!-- vCard Import Drop Box -->
-      <div class="mt-4 p-4 rounded-2xl border-2 border-dashed border-base-300 bg-base-200/50 flex flex-col sm:flex-row items-center justify-between gap-3">
-        <div class="text-xs space-y-0.5">
-          <div class="font-semibold">📲 一键导入 iPhone / Mac / iCloud 通讯录 (<code>.vcf</code>)</div>
-          <div class="text-base-content/60">在 iPhone「通讯录」长按列表选择“导出”生成 .vcf 文件后，在此选择即可自动解析中英文姓名与号码。</div>
+  <!-- Modal: Contacts -->
+  <dialog id="contactsModal" class="modal modal-bottom sm:modal-middle">
+    <div class="modal-box p-0 sm:max-w-xl flex flex-col max-h-[85vh] overflow-hidden">
+      <div class="px-5 pt-5 pb-3 flex items-center gap-2">
+        <h3 class="text-lg font-bold tracking-tight">通讯录</h3>
+        <span id="contactsModalCount" class="text-sm muted tabular-nums"></span>
+        <div class="ml-auto flex items-center gap-0.5">
+          <label class="btn btn-ghost btn-sm rounded-lg gap-1.5 font-normal cursor-pointer" title="导入 iPhone / iCloud 导出的 .vcf 文件">
+            <svg class="ico"><use href="#i-upload"/></svg>导入 vCard
+            <input id="vcfFileInput" type="file" accept=".vcf,text/vcard" class="hidden" />
+          </label>
+          <button id="toggleAddContactBtn" type="button" class="btn btn-ghost btn-sm btn-square rounded-lg" title="新建联系人" aria-label="新建联系人">
+            <svg class="ico text-base"><use href="#i-plus"/></svg>
+          </button>
+          <button type="button" data-close-modal class="btn btn-ghost btn-sm btn-circle" aria-label="关闭">
+            <svg class="ico text-base"><use href="#i-x"/></svg>
+          </button>
         </div>
-        <label class="btn btn-secondary btn-sm shrink-0 cursor-pointer">
-          选择 .vcf 文件
-          <input id="vcfFileInput" type="file" accept=".vcf,text/vcard" class="hidden" />
+      </div>
+
+      <form id="manualContactForm" class="hidden mx-5 mb-3 p-3 rounded-xl bg-base-200/70 space-y-2 anim-pop-in">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <input id="manualContactName" type="text" class="input input-sm w-full rounded-lg" placeholder="姓名" required />
+          <input id="manualContactPhone" type="text" class="input input-sm w-full rounded-lg font-mono" placeholder="号码，如 0831234567" required />
+        </div>
+        <div class="flex gap-2">
+          <input id="manualContactNote" type="text" class="input input-sm flex-1 min-w-0 rounded-lg" placeholder="备注（可选）" />
+          <button type="submit" class="btn btn-primary btn-sm rounded-lg">保存</button>
+        </div>
+      </form>
+
+      <div class="px-5 pb-2">
+        <label class="field-soft">
+          <svg class="ico"><use href="#i-search"/></svg>
+          <input id="contactsSearchInput" type="search" placeholder="搜索联系人" autocomplete="off" />
         </label>
       </div>
 
-      <!-- Manual Quick Add -->
-      <form id="manualContactForm" class="mt-4 grid grid-cols-1 sm:grid-cols-7 gap-2 items-end">
-        <div class="sm:col-span-3">
-          <input id="manualContactPhone" type="text" class="input input-sm input-bordered w-full" placeholder="号码 (如 0831234567 或 +86...)" required />
-        </div>
-        <div class="sm:col-span-2">
-          <input id="manualContactName" type="text" class="input input-sm input-bordered w-full" placeholder="姓名 (如 房东John)" required />
-        </div>
-        <div class="sm:col-span-2 flex gap-1">
-          <input id="manualContactNote" type="text" class="input input-sm input-bordered flex-1 min-w-0" placeholder="备注(可选)" />
-          <button type="submit" class="btn btn-primary btn-sm">保存</button>
-        </div>
-      </form>
+      <div id="contactsListContainer" class="flex-1 min-h-40 overflow-y-auto px-3 pb-3"></div>
 
-      <!-- Contacts Search & Table -->
-      <div class="mt-4 space-y-2">
-        <input id="contactsSearchInput" type="search" class="input input-sm input-bordered w-full" placeholder="搜索已保存联系人姓名或号码..." />
-        <div id="contactsListContainer" class="max-h-64 overflow-y-auto divide-y divide-base-200 border border-base-200 rounded-xl"></div>
+      <p class="px-5 py-3 text-[11px] text-base-content/40 border-t border-base-content/[0.06] flex items-start gap-1.5">
+        <svg class="ico mt-px"><use href="#i-lock"/></svg>
+        <span>通讯录加密保存在 NAS 本地 <code>data/contacts.json</code>，从不上传云端。iPhone：通讯录 → 列表 → 长按 → 导出。</span>
+      </p>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  </dialog>
+
+  <!-- Modal: Appearance -->
+  <dialog id="appearanceModal" class="modal modal-bottom sm:modal-middle">
+    <div class="modal-box sm:max-w-md p-6 space-y-6">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-lg font-bold tracking-tight">外观</h3>
+          <p class="text-xs muted mt-0.5">4 套基底主题 × 9 种强调色自由组合</p>
+        </div>
+        <button type="button" data-close-modal class="btn btn-ghost btn-sm btn-circle" aria-label="关闭">
+          <svg class="ico text-base"><use href="#i-x"/></svg>
+        </button>
       </div>
+
+      <section>
+        <h4 class="text-xs font-semibold muted mb-3">主题</h4>
+        <div id="themeOptions" class="grid grid-cols-4 gap-3"></div>
+        <label class="mt-4 flex items-center justify-between gap-3 text-sm cursor-pointer">
+          <span>
+            跟随系统
+            <span class="block text-xs muted">根据系统自动切换晴昼 / 墨夜</span>
+          </span>
+          <input id="followSystemToggle" type="checkbox" class="toggle toggle-sm toggle-primary" />
+        </label>
+      </section>
+
+      <section>
+        <div class="flex items-baseline justify-between mb-3">
+          <h4 class="text-xs font-semibold muted">强调色</h4>
+          <span id="accentActiveLabel" class="text-xs font-medium text-primary"></span>
+        </div>
+        <div id="accentOptions" class="flex flex-wrap gap-3"></div>
+      </section>
     </div>
     <form method="dialog" class="modal-backdrop"><button>close</button></form>
   </dialog>

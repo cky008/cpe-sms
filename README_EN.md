@@ -327,6 +327,7 @@ Run maintenance commands directly via CLI:
 npm run cpe:status                           # View 5G signal bars and SMS storage status
 npm run cpe:sync                             # Full sync to local data/sms-archive.json
 npm run cpe:inbox                            # View recent message threads in terminal
+npm run cpe:unread                           # View unread messages list
 npm run cpe:send -- 0831234567 "Hello!"      # Send SMS with automatic dial-code normalization
 npm run cpe:import-vcf -- ./Contacts.vcf     # Import vCard contact file
 ```

@@ -325,6 +325,7 @@ npm run preview:telegram -- --send
 npm run cpe:status                           # 查询 CPE 5G 信号、漫游状态与短信容量
 npm run cpe:sync                             # 全量拉取短信并写入加密归档 data/sms-archive.json
 npm run cpe:inbox                            # 终端展示最近会话列表（含国家/服务号识别）
+npm run cpe:unread                           # 终端展示未读短信列表
 npm run cpe:send -- 0831234567 "你好！"      # 发送短信（自动规范化爱尔兰本地号）
 npm run cpe:import-vcf -- ./Contacts.vcf     # 导入本地 vCard 通讯录文件
 ```

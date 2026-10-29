@@ -32,6 +32,7 @@
     "web": "node dist/cli.js web",
     "cpe:status": "node src/cli.ts status",
     "cpe:inbox": "node src/cli.ts inbox",
+    "cpe:unread": "node src/cli.ts unread",
     "cpe:thread": "node src/cli.ts thread",
     "cpe:send": "node src/cli.ts send",
     "cpe:sync": "node src/cli.ts sync",

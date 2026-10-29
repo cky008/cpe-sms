@@ -162,10 +162,30 @@ WEB_PORT=18383
 
 ### 2. 群晖 NAS / Docker Compose 部署
 
-使用 Docker Compose 启动容器（内置多阶段编译，运行期以非 root `node` 用户执行，并通过 `su-exec` 自动维护挂载目录权限）：
+推荐直接使用 GitHub Container Registry 预构建的多架构镜像（支持 `linux/amd64` 与 `linux/arm64`），避免在低功耗 NAS 上本地编译耗时：
+
+```yaml
+# docker-compose.yml 示例（使用预构建镜像）
+services:
+  cpe-sms:
+    image: ghcr.io/cky008/cpe-sms:latest
+    container_name: cpe-sms
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "18383:18383"
+    volumes:
+      - ./data:/app/data
+```
+
+启动容器（内置以非 root `node` 用户执行，并通过 `su-exec` 自动维护挂载目录权限）：
 
 ```bash
-# 构建并启动服务
+# 方式 A：直接拉取预构建镜像启动（推荐）
+sudo docker compose up -d
+
+# 方式 B：本地多阶段编译启动
 sudo docker compose up -d --build
 ```
 
@@ -269,7 +289,7 @@ npm run cpe:import-vcf -- ./Contacts.vcf     # 导入本地 vCard 通讯录文�
 | `CPE_PASSWORD` | - | CPE 登录密码（必需） |
 | `DATA_ENCRYPTION_KEY` | 默认回退至 `CPE_PASSWORD` | 本地 `data/*.json` 静态存储 AES-256-GCM 根密钥 |
 | `TELEGRAM_API` | - | Telegram Bot Token（必需） |
-| `TELEGRAM_CHAT_ID` | - | 预设授权 Chat ID（支持多个逗号分隔；也可通过 `/auth` 动态绑定） |
+| `TELEGRAM_CHAT_IDS` | - | 预设授权 Chat ID（支持多个逗号分隔；亦支持 `TELEGRAM_CHAT_ID` 或通过 `/auth` 动态绑定） |
 | `DEFAULT_COUNTRY_CODE` | `+353` | 默认国家区号（爱尔兰），本地无前缀手机号自动规范化为 E.164 |
 | `WEB_ENABLED` | `true` | 是否启用内置网页中心 |
 | `WEB_PORT` | `18383` | 网页中心与统一 API 监听端口（避让 `:8080`） |
@@ -300,6 +320,17 @@ npm run build && npm run check
 项目配置了 [GitHub Actions CI](.github/workflows/ci.yml)，在每次代码推送到 `main` 分支或提交 Pull Request 时自动运行：
 - **测试与门禁作业**：在 Ubuntu 环境基于 Node.js 22 执行依赖安装、资源编译及全量门禁检查。
 - **容器镜像构建作业**：基于 `Dockerfile` 执行多阶段容器构建冒烟验证，确保发布产物零依赖且可重现。
+
+---
+
+## 📶 设备与固件兼容性 (Hardware Compatibility)
+
+- **官方已验证设备**：
+  - **华为 5G CPE Ultra 6 (`H168-383`)**（固件版本 HarmonyOS / EMUI 11.x 及以上）
+- **架构兼容性说明**：
+  - 本项目的协议通信层基于华为现代 CPE 的 **SCRAM-SHA256** 登录握手与 **Curve25519 ECDH + AES-256-GCM** 加密协议构建，并具备 `108006` 密码防暴力破解熔断机制。
+  - 理论上适用于搭载相同 Web 管理接口与加密协议的其他华为 CPE / 移动路由器系列（如 `H158-381`、`H155-381`、`H138-380`、`H122-373`、`B818` 等）。
+  - 如果你在其他华为路由器型号上成功运行或遇到协议兼容问题，非常欢迎提交 [Issue](https://github.com/cky008/cpe-sms/issues) 或 Pull Request 帮助丰富兼容设备列表！
 
 ---
 

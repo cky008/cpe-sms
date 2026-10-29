@@ -164,9 +164,30 @@ WEB_PORT=18383
 
 ### 2. Docker Compose / Synology NAS Deployment
 
-Deploy using Docker Compose (runs as unprivileged `node` user with automatic `./data` permissions initialization):
+You can use the pre-built multi-architecture container images from GitHub Container Registry (supporting `linux/amd64` and `linux/arm64`) directly without compiling on low-powered NAS devices:
+
+```yaml
+# docker-compose.yml example (using pre-built image)
+services:
+  cpe-sms:
+    image: ghcr.io/cky008/cpe-sms:latest
+    container_name: cpe-sms
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "18383:18383"
+    volumes:
+      - ./data:/app/data
+```
+
+Start the container (runs securely as unprivileged `node` user with `su-exec` managing volume permissions):
 
 ```bash
+# Option A: Pull and start using the pre-built image (Recommended)
+sudo docker compose up -d
+
+# Option B: Build locally from source
 sudo docker compose up -d --build
 ```
 
@@ -270,7 +291,7 @@ All settings can be configured via environment variables or `.env` (see [`.env.e
 | `CPE_PASSWORD` | - | Router login password (**required**) |
 | `DATA_ENCRYPTION_KEY` | Falls back to `CPE_PASSWORD` | Master key for AES-256-GCM local storage encryption |
 | `TELEGRAM_API` | - | Telegram Bot API Token (**required**) |
-| `TELEGRAM_CHAT_ID` | - | Pre-authorized Chat IDs (or authenticate via `/auth`) |
+| `TELEGRAM_CHAT_IDS` | - | Pre-authorized Chat IDs (comma-separated; also supports `TELEGRAM_CHAT_ID` or `/auth` dynamic binding) |
 | `DEFAULT_COUNTRY_CODE` | `+353` | Default country dial code for local number normalization |
 | `TZ` | `UTC` | Container timezone |
 | `WEB_ENABLED` | `true` | Enable built-in Web Center |
@@ -301,6 +322,17 @@ npm run build && npm run check
 Automated [CI Workflow](.github/workflows/ci.yml) triggers on every push and PR to `main`:
 - **Quality Gate Job**: Installs dependencies, compiles assets, and runs full `npm run check`.
 - **Docker Build Job**: Validates reproducible multi-stage `Dockerfile` image builds.
+
+---
+
+## 📶 Hardware & Firmware Compatibility
+
+- **Officially Verified**:
+  - **Huawei 5G CPE Ultra 6 (`H168-383`)** (firmware HarmonyOS / EMUI 11.x or later)
+- **Protocol Compatibility**:
+  - The communication layer is built upon modern Huawei CPE **SCRAM-SHA256** authentication and **Curve25519 ECDH + AES-256-GCM** protocol with `108006` circuit-breaker protection.
+  - In theory, it is compatible with other Huawei CPE / router series sharing the same Web management APIs and cryptographic structure (e.g., `H158-381`, `H155-381`, `H138-380`, `H122-373`, `B818`, etc.).
+  - If you test `cpe-sms` on other router models, feedback and PRs are warmly welcomed to expand our verified device directory!
 
 ---
 

@@ -45,7 +45,7 @@
     "synology",
     "nas"
   ],
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "devDependencies": {
     "@tailwindcss/cli": "^4.3.3",
     "@types/node": "^26.6.5",

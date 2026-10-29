@@ -12,6 +12,9 @@
   <a href="https://github.com/cky008/cpe-sms/actions/workflows/ci.yml">
     <img src="https://img.shields.io/github/actions/workflow/status/cky008/cpe-sms/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white" alt="CI Status" />
   </a>
+  <a href="https://github.com/cky008/cpe-sms/pkgs/container/cpe-sms">
+    <img src="https://img.shields.io/badge/GHCR-Multi--Arch-2496ED?logo=docker&logoColor=white" alt="GHCR Multi-Arch" />
+  </a>
   <a href="https://nodejs.org/">
     <img src="https://img.shields.io/badge/Node.js-%3E%3D22.6.0-339933?logo=node.js&logoColor=white" alt="Node.js" />
   </a>
@@ -33,9 +36,6 @@
   <a href="https://tailwindcss.com/">
     <img src="https://img.shields.io/badge/Tailwind_CSS-v4-06B6D4?logo=tailwindcss&logoColor=white" alt="Tailwind CSS" />
   </a>
-  <a href="Dockerfile">
-    <img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white" alt="Docker Ready" />
-  </a>
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-orange.svg" alt="License" />
   </a>
@@ -43,28 +43,32 @@
 
 ---
 
-`cpe-sms` 是专为 **华为 5G CPE Ultra 6 (`H168-383`)** 打造的端到端短信管理与加密网关系统。采用 **Strict TypeScript** 编写，实现**全运行时零依赖**（100% 依赖 Node.js 原生 API），支持 CPE 管理后台全自动鉴权与报文加解密。
+`cpe-sms` 是专为 **华为 5G CPE Ultra 6 (`H168-383`)** 打造的端到端短信管理与加密网关系统。采用 **Strict TypeScript** 编写，实现**全运行时零依赖**（100% 依赖 Node.js 原生 API），支持 CPE 路由器全自动安全鉴权与报文加解密。
 
-系统提供 **Telegram 交互式双向机器人（支持分步发信与原生回信）**、基于 **daisyUI v5 的「素笺 (Sujian)」纸感极简实时网页中心（默认统一端口 `:18383`）**、**本地 AES-256-GCM 全盘静态加密归档**、**54 国国际区号自动识别** 以及 **iPhone `.vcf` 通讯录导入**，专为家庭私有内网 NAS（群晖 DSM / Docker）与 **Tailscale + HTTPS 反向代理** 场景量身打造。
+系统提供 **Telegram 交互式双向机器人（支持分步发信与原生回信）**、基于 **daisyUI v5 的「素笺 (Sujian)」纸感极简实时网页中心（默认统一端口 `:18383`）**、**本地 AES-256-GCM 全盘静态加密归档**、**开放社区多语言系统 (`locales/*.json`)**、**54 国国际区号自动识别** 以及 **iPhone `.vcf` 通讯录导入**，专为家庭私有内网 NAS（群晖 DSM / Docker）与 **Tailscale + HTTPS 反向代理** 场景量身打造。
 
 ---
 
 ## 目录
 
-- [核心特性](#-核心特性)
-- [系统架构](#-系统架构)
-- [「素笺」网页中心](#-素笺-sujian-极简网页中心)
-- [快速上手](#-快速上手)
+- [✨ 核心特性](#-核心特性)
+- [🏗️ 系统架构](#-系统架构)
+- [📜「素笺」网页中心](#-素笺-sujian-极简网页中心)
+- [🌐 多语言与社区翻译 (i18n)](#-多语言与社区翻译-i18n)
+- [📶 设备与固件兼容性](#-设备与固件兼容性-hardware-compatibility)
+- [🚀 快速上手](#-快速上手)
   - [1. 准备配置文件 (.env)](#1-准备配置文件-env)
   - [2. 群晖 NAS / Docker Compose 部署](#2-群晖-nas--docker-compose-部署)
   - [3. Tailscale 内网域名与 HTTPS 反向代理](#3-tailscale-内网域名与-https-反向代理)
   - [4. 本地源码运行与开发](#4-本地源码运行与开发)
-- [Telegram 机器人指南](#-telegram-机器人指南)
-- [CLI 命令行工具](#-cli-命令行工具)
-- [配置说明](#-配置说明)
-- [工程规范与测试门禁](#-工程规范与测试门禁)
-- [免责声明](#-免责声明-disclaimer)
-- [开源许可证](#-开源许可证)
+- [📱 Telegram 机器人指南](#-telegram-机器人指南)
+- [💻 CLI 命令行工具](#-cli-命令行工具)
+- [⚙️ 配置说明](#-配置说明)
+- [🧪 工程规范与测试门禁](#-工程规范与测试门禁)
+- [❓ 常见问题排查 (FAQ)](#-常见问题排查-faq)
+- [🤝 参与贡献](#-参与贡献-contributing)
+- [⚠️ 免责声明](#-免责声明-disclaimer)
+- [📄 开源许可证](#-开源许可证)
 
 ---
 
@@ -140,6 +144,42 @@ flowchart LR
 
 - **9 种自适应强调色**：随主题（默认）、经典蓝、靛青、鸢尾紫、玫瑰粉、朱砂红、琥珀橙、松石绿、海湾青、石墨灰。
 - **轻量微动效**：灵动悬浮新建按钮（`N` 快捷键直接调起，`/` 聚焦搜索框）、验证码点击复制状态切换、主题切换 320ms 平滑过渡，严格支持 `prefers-reduced-motion`。
+
+---
+
+## 🌐 多语言与社区翻译 (i18n)
+
+`cpe-sms` 具备开放、可扩展且零外部依赖的多语言架构：
+
+- **开箱即用双语支持**：默认内置 **简体中文 (`zh-CN`)** 与 **English (`en`)**，支持自动探测浏览器偏好，或在「外观」弹窗中实时无缝切换。
+- **动态深度本地化**：
+  - **时间与分组**：相对时间分组（今天、昨天、本周、本月 / Today, Yesterday, This Week, This Month）及短日期展示。
+  - **短信编码与字数**：GSM-7 / UCS-2 短信编码实时计算与计费条数描述（如 `GSM-7 · 5 chars · 1 segment` / `GSM-7 · 5 字 · 1 条`）。
+  - **国际国家目录**：54 国国际区号与国家名称即时适配（爱尔兰 / Ireland、中国大陆 / China 等）。
+- **零延迟渲染与无闪烁 (Zero-FOUC)**：字典在编译期自动生成 TypeScript 强类型常量，首屏加载时同步渲染，内网或离线环境下无任何异步网络开销或布局跳变。
+
+### 社区翻译贡献指南 (How to Contribute a New Language)
+
+添加一种新语言极其简单，**无需修改任何 TypeScript 代码**：
+
+1. **新建语言字典**：复制 [`locales/en.json`](locales/en.json) 或 [`locales/zh-CN.json`](locales/zh-CN.json) 为 `locales/<语言代码>.json`（例如 `locales/ja.json`），并在文件顶部更新 `_meta` 块：
+   ```json
+   {
+     "_meta": {
+       "name": "日本語",
+       "code": "ja"
+     },
+     "app": { ... }
+   }
+   ```
+2. **翻译字典键值**：翻译各分类下的文本内容，保留形如 `{count}`、`{phone}`、`{who}`、`{code}` 的插值变量。
+3. **执行编译与自动校验**：
+   ```bash
+   npm run build
+   npm test
+   ```
+   构建流水线（[`scripts/build-locales.ts`](scripts/build-locales.ts)）会自动扫描 `locales/` 目录并注册新语言，单元测试会自动校验新字典与基准字典的 100% 键对齐。
+4. **提交 PR**：详见 [CONTRIBUTING.md#7-contributing-translations-i18n](CONTRIBUTING.md)。
 
 ---
 
@@ -344,6 +384,50 @@ npm run build && npm run check
   - 本项目的协议通信层基于华为现代 CPE 的 **SCRAM-SHA256** 登录握手与 **Curve25519 ECDH + AES-256-GCM** 加密协议构建，并具备 `108006` 密码防暴力破解熔断机制。
   - 理论上适用于搭载相同 Web 管理接口与加密协议的其他华为 CPE / 移动路由器系列（如 `H158-381`、`H155-381`、`H138-380`、`H122-373`、`B818` 等）。
   - 如果你在其他华为路由器型号上成功运行或遇到协议兼容问题，非常欢迎提交 [Issue](https://github.com/cky008/cpe-sms/issues) 或 Pull Request 帮助丰富兼容设备列表！
+
+---
+
+## ❓ 常见问题排查 (FAQ)
+
+<details>
+<summary><strong>Q: 启动日志输出 <code>108006 熔断保护终止</code> 是什么原因？</strong></summary>
+
+> **A**: 这是华为 CPE 管理密码错误的安全保护机制。在华为 H168-383 固件上，**密码连续输错 3 次会导致 CPE 管理后台被强制锁定 2 小时**。`cpe-sms` 内置了熔断保护，一旦收到 `108006`（密码错误）或 `108007`（账户已锁）立即熔断退出，绝不自动重试。请检查 `.env` 文件中的 `CPE_PASSWORD` 是否正确。
+</details>
+
+<details>
+<summary><strong>Q: 群晖 NAS Docker 挂载 <code>./data</code> 目录时报错权限不足 (EACCES)？</strong></summary>
+
+> **A**: 容器镜像内置了 `su-exec` 与 `docker-entrypoint.sh` 入口脚本。启动时会自动将挂载的 `/app/data` 目录属主更正为非 root 的 `node:node` 用户，并设置 `0700` 目录权限。如果使用群晖 Container Manager，请确保挂载的宿主机文件夹具备基本读写权限。
+</details>
+
+<details>
+<summary><strong>Q: 为什么默认端口选用 <code>18383</code> 而不是标准的 <code>8080</code>？</strong></summary>
+
+> **A**: 群晖 DSM 默认服务、Portainer、qBittorrent 等常见 NAS 套件经常占用 `8080` 端口。`cpe-sms` 默认采用高位独立端口 `18383`（寓意 H168-383），并整合了 Web 前端、SSE 实时推送流、REST API 与 `/healthz` 健康检查，单个端口全功能收敛。
+</details>
+
+<details>
+<summary><strong>Q: 在配置反向代理后，网页端为什么无法实时接收新短信通知？</strong></summary>
+
+> **A**: 网页端通过 SSE（`/api/events`）长连接接收实时事件。部分反向代理（如 Nginx 或群晖反向代理）默认开启了响应缓存缓冲（Proxy Buffering）。请确保在反向代理中配置了 `proxy_buffering off;`，或确认响应头中带有 `X-Accel-Buffering: no`（本项目已默认输出此 Header）。
+</details>
+
+<details>
+<summary><strong>Q: 短信加密归档的密钥丢失了怎么办？</strong></summary>
+
+> **A**: 所有持久化数据（`data/*.json`）均使用 `DATA_ENCRYPTION_KEY`（未配置时默认使用 `CPE_PASSWORD`）经 `scrypt` + `AES-256-GCM` 静态加密。若修改了密码导致解密失败，切换回旧密钥即可重新解密。绝不向公网或云端上传任何数据。
+</details>
+
+---
+
+## 🤝 参与贡献 (Contributing)
+
+热烈欢迎各种形式的开源贡献！无论是报告 Bug、提出新功能建议、适配更多型号的华为路由器，还是贡献多语言翻译：
+
+1. **阅读贡献指南**：请在开始前查阅 [CONTRIBUTING.md](CONTRIBUTING.md)，了解开发环境配置、Conventional Commits 提交规范及 TDD 测试驱动工作流。
+2. **测试与安全门禁**：所有提交与 Pull Request 必须通过 `npm run build && npm run check`（含严格类型检查、`>= 90%` 覆盖率及零密钥泄露审计）。
+3. **安全漏洞反馈**：发现潜在安全漏洞请遵循 [SECURITY.md](SECURITY.md) 政策，避免在公开 Issue 中讨论敏感细节。
 
 ---
 

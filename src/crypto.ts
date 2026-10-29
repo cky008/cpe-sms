@@ -4,7 +4,7 @@ import type { SmsModeDetection, SmsTextModeCode } from "./types.ts";
 /**
  * Curve25519 prime 2^255 - 19 and Montgomery constant (486662 - 2) / 4 = 121665.
  *
- * IMPORTANT (Protocol specification for H168-383 `lib/elliptic.min.js` + `js/main.js`):
+ * IMPORTANT (Protocol specification for H168-383 Curve25519):
  * Huawei's WebUI uses `indutny/elliptic` `new elliptic.ec("curve25519")`, NOT standard
  * RFC 7748 X25519:
  *   1. Keys and coordinates are serialized in BIG-ENDIAN hex (NOT little-endian).

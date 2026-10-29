@@ -1,7 +1,7 @@
 # cpe-sms
 
 <p align="center">
-  <strong>Huawei 5G CPE Ultra 6 (H168-383) End-to-End Encrypted SMS Gateway · Sujian (素笺) Real-Time Web Center · Telegram Two-Way Bot</strong>
+  <strong>End-to-End Encrypted SMS Gateway for Huawei 5G CPE Ultra 6 (H168-383) · Sujian (素笺) Real-Time Web Center · Telegram Two-Way Bot</strong>
 </p>
 
 <p align="center">
@@ -11,6 +11,9 @@
 <p align="center">
   <a href="https://github.com/cky008/cpe-sms/actions/workflows/ci.yml">
     <img src="https://img.shields.io/github/actions/workflow/status/cky008/cpe-sms/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white" alt="CI Status" />
+  </a>
+  <a href="https://github.com/cky008/cpe-sms/pkgs/container/cpe-sms">
+    <img src="https://img.shields.io/badge/GHCR-Multi--Arch-2496ED?logo=docker&logoColor=white" alt="GHCR Multi-Arch" />
   </a>
   <a href="https://nodejs.org/">
     <img src="https://img.shields.io/badge/Node.js-%3E%3D22.6.0-339933?logo=node.js&logoColor=white" alt="Node.js" />
@@ -33,9 +36,6 @@
   <a href="https://tailwindcss.com/">
     <img src="https://img.shields.io/badge/Tailwind_CSS-v4-06B6D4?logo=tailwindcss&logoColor=white" alt="Tailwind CSS" />
   </a>
-  <a href="Dockerfile">
-    <img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white" alt="Docker Ready" />
-  </a>
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-orange.svg" alt="License" />
   </a>
@@ -45,26 +45,30 @@
 
 `cpe-sms` is an end-to-end encrypted SMS gateway, historical archive, and real-time management center built specifically for the **Huawei 5G CPE Ultra 6 (`H168-383`)** router. Written in **Strict TypeScript** with **zero production runtime dependencies** (relying 100% on Node.js built-in APIs), it handles full router SCRAM authentication and wire-level protocol cryptography automatically.
 
-The system provides a **two-way interactive Telegram Bot (with step-by-step send wizard and direct reply-to-send)**, the **"Sujian (素笺)" paper-like minimalist real-time Web Center based on daisyUI v5 (defaulting to unified port `:18383`)**, **local AES-256-GCM full-storage encryption at rest**, **54-country dial code directory & brand sender classifier**, and **iPhone `.vcf` contact book import**, designed for private NAS environments (Synology DSM / Docker) and **Tailscale + HTTPS reverse proxy** topologies.
+The system provides a **two-way interactive Telegram Bot (with step-by-step send wizard and direct reply-to-send)**, the **"Sujian (素笺)" paper-like minimalist real-time Web Center based on daisyUI v5 (defaulting to unified port `:18383`)**, **local AES-256-GCM full-storage encryption at rest**, an **extensible community translation system (`locales/*.json`)**, **54-country dial code directory & brand sender classifier**, and **iPhone `.vcf` contact book import**, designed for private NAS environments (Synology DSM / Docker) and **Tailscale + HTTPS reverse proxy** topologies.
 
 ---
 
 ## Table of Contents
 
-- [Key Features](#-key-features)
-- [Architecture](#-architecture)
-- [Sujian (素笺) Web Center](#-sujian-素笺-web-center)
-- [Quick Start](#-quick-start)
+- [✨ Key Features](#-key-features)
+- [🏗️ Architecture](#-architecture)
+- [📜 Sujian (素笺) Web Center](#-sujian-素笺-web-center)
+- [🌐 Internationalization & Community Locales (i18n)](#-internationalization--community-locales-i18n)
+- [📶 Hardware & Firmware Compatibility](#-hardware--firmware-compatibility)
+- [🚀 Quick Start](#-quick-start)
   - [1. Configuration (.env)](#1-configuration-env)
   - [2. Docker Compose / Synology NAS Deployment](#2-docker-compose--synology-nas-deployment)
   - [3. Tailscale Mesh Network & HTTPS Reverse Proxy](#3-tailscale-mesh-network--https-reverse-proxy)
   - [4. Local Development & TDD Quality Gates](#4-local-development--tdd-quality-gates)
-- [Telegram Bot Guide](#-telegram-bot-guide)
-- [CLI Reference](#-cli-reference)
-- [Configuration Reference](#-configuration-reference)
-- [Engineering Standards & CI/CD](#-engineering-standards--cicd)
-- [Disclaimer](#-disclaimer)
-- [License](#-license)
+- [📱 Telegram Bot Guide](#-telegram-bot-guide)
+- [💻 CLI Reference](#-cli-reference)
+- [⚙️ Configuration Reference](#-configuration-reference)
+- [🧪 Engineering Standards & CI/CD](#-engineering-standards--cicd)
+- [❓ FAQ & Troubleshooting](#-faq--troubleshooting)
+- [🤝 Contributing](#-contributing)
+- [⚠️ Disclaimer](#-disclaimer)
+- [📄 License](#-license)
 
 ---
 
@@ -139,6 +143,42 @@ The Web Center follows the philosophy of "Sujian" (素笺 — plain silk letter 
 
 - **9 Adaptive Accent Colors**: Theme Default, Classic Blue, Indigo, Purple, Rose, Vermilion Red, Amber Orange, Teal, Gulf Cyan, Graphite Gray.
 - **Subtle Micro-Interactions**: Floating action button (`N` shortcut to compose, `/` to focus search), OTP copy feedback animation, 320ms smooth theme transition, and strict `prefers-reduced-motion` compliance.
+
+---
+
+## 🌐 Internationalization & Community Locales (i18n)
+
+`cpe-sms` features an open, extensible, zero-dependency translation architecture:
+
+- **Built-in Dual Language Support**: Ships with **English (`en`)** and **Simplified Chinese (`zh-CN`)**, automatically matching your browser's preferred language, with instant live switching via the "Appearance" modal.
+- **Deep Localization**:
+  - **Dynamic Time & Grouping**: Smart relative time labels (Today, Yesterday, This Week, This Month / 今天、昨天、本周、本月) and localized timestamps.
+  - **SMS Encoding & Segment Metrics**: Real-time GSM-7 / UCS-2 character calculations and segment descriptions (e.g. `GSM-7 · 5 chars · 1 segment` / `GSM-7 · 5 字 · 1 条`).
+  - **Country Directory**: 54-country dial code table with localized names in English and Chinese.
+- **Zero-Latency Rendering (Zero-FOUC)**: Dictionaries are pre-compiled into strongly-typed TypeScript constants during build; no network requests, white screen flashes, or layout shifts on initial load.
+
+### Contributing a New Language
+
+Adding a new language is purely declarative and requires **zero TypeScript code changes**:
+
+1. **Create a Locale File**: Copy [`locales/en.json`](locales/en.json) or [`locales/zh-CN.json`](locales/zh-CN.json) to `locales/<lang-code>.json` (e.g., `locales/ja.json` or `locales/de.json`) and update the `_meta` block at the top:
+   ```json
+   {
+     "_meta": {
+       "name": "日本語",
+       "code": "ja"
+     },
+     "app": { ... }
+   }
+   ```
+2. **Translate Keys**: Translate the strings for each category, keeping interpolation placeholders like `{count}`, `{phone}`, `{who}`, and `{code}` intact.
+3. **Build & Verify**:
+   ```bash
+   npm run build
+   npm test
+   ```
+   The build script ([`scripts/build-locales.ts`](scripts/build-locales.ts)) automatically discovers your file, generates client code, and copies it to public assets. Automated test suites verify 100% key parity with the baseline dictionary.
+4. **Submit a PR**: See [CONTRIBUTING.md#7-contributing-translations-i18n](CONTRIBUTING.md).
 
 ---
 
@@ -346,6 +386,50 @@ Automated [CI Workflow](.github/workflows/ci.yml) triggers on every push and PR 
   - The communication layer is built upon modern Huawei CPE **SCRAM-SHA256** authentication and **Curve25519 ECDH + AES-256-GCM** protocol with `108006` circuit-breaker protection.
   - In theory, it is compatible with other Huawei CPE / router series sharing the same Web management APIs and cryptographic structure (e.g., `H158-381`, `H155-381`, `H138-380`, `H122-373`, `B818`, etc.).
   - If you test `cpe-sms` on other router models, feedback and PRs are warmly welcomed to expand our verified device directory!
+
+---
+
+## ❓ FAQ & Troubleshooting
+
+<details>
+<summary><strong>Q: What does the <code>108006 circuit breaker triggered</code> log message mean?</strong></summary>
+
+> **A**: This is an essential safety feature for Huawei CPE routers. On the H168-383 firmware, **3 consecutive failed password attempts permanently lock out router web admin access for 2 hours**. `cpe-sms` implements an automatic circuit breaker: when error `108006` (wrong password) or `108007` (account locked) is received, the gateway aborts immediately and never retries. Verify your `CPE_PASSWORD` inside `.env`.
+</details>
+
+<details>
+<summary><strong>Q: Synology NAS Docker reports permission errors (EACCES) on <code>./data</code>?</strong></summary>
+
+> **A**: The container image includes `su-exec` and a smart `docker-entrypoint.sh` entrypoint. On launch, it automatically sets proper `node:node` ownership and `0700` permissions on `/app/data` before dropping root privileges. Ensure the host bind-mounted directory has basic read/write access in Container Manager.
+</details>
+
+<details>
+<summary><strong>Q: Why does the gateway default to port <code>18383</code> instead of <code>8080</code>?</strong></summary>
+
+> **A**: Port `8080` is frequently claimed on NAS devices by Synology DSM default services, Portainer, qBittorrent, etc. `cpe-sms` defaults to `18383` (named after H168-383) to guarantee collision-free deployment, consolidating web UI, SSE streams, REST API, and health checks on a single high port.
+</details>
+
+<details>
+<summary><strong>Q: Why don't real-time SMS notifications show up behind a reverse proxy?</strong></summary>
+
+> **A**: The Web Center uses Server-Sent Events (SSE) via `/api/events`. Ensure your reverse proxy does not buffer streaming responses. For Nginx or Synology Reverse Proxy, configure `proxy_buffering off;` and verify `X-Accel-Buffering: no` is forwarded (emitted by default by `cpe-sms`).
+</details>
+
+<details>
+<summary><strong>Q: What happens if I lose my data encryption key?</strong></summary>
+
+> **A**: All local files (`data/*.json`) are statically encrypted at rest with `DATA_ENCRYPTION_KEY` (or `CPE_PASSWORD`) via `scrypt` + `AES-256-GCM`. If you modify your password and need to read older archives, restore your previous key to re-derive the decryption subkeys. No data is ever sent to third-party clouds.
+</details>
+
+---
+
+## 🤝 Contributing
+
+We welcome community contributions! Whether submitting bug reports, suggesting features, testing other Huawei router models, or contributing translations:
+
+1. **Read the Guidelines**: Review [CONTRIBUTING.md](CONTRIBUTING.md) for developer setup, Conventional Commits, and the TDD workflow.
+2. **Quality Gates**: All PRs must pass `npm run build && npm run check` (strict typecheck, `>= 90%` coverage, and secret leak scanner).
+3. **Security Vulnerabilities**: Please follow [SECURITY.md](SECURITY.md) to report vulnerabilities privately.
 
 ---
 

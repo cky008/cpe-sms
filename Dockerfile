@@ -7,6 +7,7 @@ COPY package.json package-lock.json tsconfig.json tsconfig.test.json tsconfig.we
 RUN npm ci --ignore-scripts
 
 COPY scripts ./scripts
+COPY locales ./locales
 COPY src ./src
 RUN npm run build
 

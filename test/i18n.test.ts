@@ -45,6 +45,15 @@ test("buildLocales discovers locales, writes generated TS, and copies to public 
   }
 });
 
+test("Dockerfile includes locales directory in builder stage", () => {
+  const dockerfile = fs.readFileSync(path.join(ROOT_DIR, "Dockerfile"), "utf8");
+  assert.match(
+    dockerfile,
+    /COPY\s+locales\s+\.\/locales/,
+    "Dockerfile must copy locales directory into builder stage"
+  );
+});
+
 test("all community locale files have 100% key parity with default zh-CN.json", () => {
   const zhFile = path.join(LOCALES_DIR, "zh-CN.json");
   assert.ok(fs.existsSync(zhFile), "locales/zh-CN.json must exist as baseline");

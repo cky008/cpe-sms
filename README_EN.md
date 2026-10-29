@@ -74,17 +74,17 @@ The system provides a **two-way interactive Telegram Bot (with step-by-step send
 
 ## ✨ Key Features
 
-- **🔐 Zero-Leakage Encryption at Rest & In Transit**
-  - **Storage at rest**: All persistent files (`data/state.json`, `data/sms-archive.json`, `data/contacts.json`) are encrypted using `scrypt` + fresh salt `HKDF-SHA256` subkeys with **`AES-256-GCM`** and written atomically with `0600` permissions. No plaintext SMS, OTP code, or phone number ever touches disk.
+- **🔐 At-Rest & In-Transit Encryption**
+  - **Storage at rest**: All persistent files (`data/state.json`, `data/sms-archive.json`, `data/contacts.json`) are encrypted using `scrypt` + fresh salt `HKDF-SHA256` subkeys with **`AES-256-GCM`** and written atomically with `0600` permissions. SMS text, OTP codes, and phone numbers are stored encrypted on disk.
   - **CPE transport security**: Complete implementation of Huawei **SCRAM-SHA256** login handshake, router RSA-PSS public key signature verification, and **Curve25519 ECDH (big-endian unclamped) + AES-256-GCM (`enc-type=1|2|3`)** payload encryption.
-  - **Circuit breaker on `108006` / `108007`**: Immediately aborts on wrong password (`108006`) or locked account (`108007`) to prevent router lockout on `H168-383`.
-  - **Zero-conflict ephemeral sessions**: Uses unauthenticated lightweight polling every 5s; only holds an authenticated session for ~200ms when handling messages and logs out immediately via `finally`, avoiding blocking browser logins at `http://192.168.8.1/#/sms`.
+  - **Circuit breaker on `108006` / `108007`**: Immediately aborts on wrong password (`108006`) or locked account (`108007`) to protect against router lockout on `H168-383`.
+  - **Ephemeral sessions**: Uses unauthenticated lightweight polling every 5s; holds an authenticated session for ~200ms when handling messages and logs out immediately via `finally` to keep browser admin access available.
 - **📜 "Sujian (素笺)" Minimalist Real-Time Web Center**
   - Built with **daisyUI v5 + Tailwind CSS v4** (compiled offline, zero CDN dependencies, instant LAN loading).
-  - **Zero-emoji typographic design**: 20+ custom `1.75px` stroke vector SVG icons; 5-minute message bubble aggregation; monospace OTP badges with one-click copy.
+  - **Linear vector icons & typography**: 20+ custom `1.75px` stroke vector SVG icons; 5-minute message bubble aggregation; monospace OTP badges with one-click copy.
   - **4 Base Themes × 9 Accent Colors**: Sujian Light (pure light), Sujian Paper (warm oat paper), Sujian Dark (charcoal dark), and Sujian Midnight (deep night) with dual-curve luminance tuning for dark and light backgrounds, supporting auto system dark/light switching.
   - **Extensible Community i18n**: Out-of-the-box English and Simplified Chinese support (matches browser locale or manually switched in Appearance); community contributors can add any language by dropping a single [`locales/<lang>.json`](locales/) file.
-  - **High-port consolidation (`:18383`)**: Serves web UI, SSE event streams (`/api/events`), health checks (`/healthz`), and REST API on a single port, avoiding common NAS `:8080` collisions.
+  - **High-port service (`:18383`)**: Serves web UI, SSE event streams (`/api/events`), health checks (`/healthz`), and REST API on a single port for simplified network deployments.
 - **✍️ Two-Way Telegram Bot & Guided Send Wizard**
   - **Guided wizard (`/new`)**: Interactive step-by-step sender with country dial code switching, contact name search, and message encoding preview (GSM 7-bit vs UCS-2) with segment counts before sending.
   - **Native reply-to-send**: Long-press or right-click to reply to any notification message to directly send an SMS back to the sender.
@@ -395,7 +395,7 @@ Automated [CI Workflow](.github/workflows/ci.yml) triggers on every push and PR 
 <details>
 <summary><strong>Q: What does the <code>108006 circuit breaker triggered</code> log message mean?</strong></summary>
 
-> **A**: This is an essential safety feature for Huawei CPE routers. On the H168-383 firmware, **3 consecutive failed password attempts permanently lock out router web admin access for 2 hours**. `cpe-sms` implements an automatic circuit breaker: when error `108006` (wrong password) or `108007` (account locked) is received, the gateway aborts immediately and never retries. Verify your `CPE_PASSWORD` inside `.env`.
+> **A**: This is a safety feature for Huawei CPE routers. On the H168-383 firmware, multiple consecutive failed password attempts trigger an administrative lockout. `cpe-sms` implements an automatic circuit breaker: when error `108006` (wrong password) or `108007` (account locked) is received, the gateway terminates immediately without retrying to prevent lockout. Verify your `CPE_PASSWORD` inside `.env`.
 </details>
 
 <details>
@@ -407,7 +407,7 @@ Automated [CI Workflow](.github/workflows/ci.yml) triggers on every push and PR 
 <details>
 <summary><strong>Q: Why does the gateway default to port <code>18383</code> instead of <code>8080</code>?</strong></summary>
 
-> **A**: Port `8080` is frequently claimed on NAS devices by Synology DSM default services, Portainer, qBittorrent, etc. `cpe-sms` defaults to `18383` (named after H168-383) to guarantee collision-free deployment, consolidating web UI, SSE streams, REST API, and health checks on a single high port.
+> **A**: Port `8080` is frequently claimed on NAS devices by Synology DSM default services, Portainer, qBittorrent, etc. `cpe-sms` defaults to `18383` (named after H168-383) to provide a clean deployment, consolidating web UI, SSE streams, REST API, and health checks on a single high port.
 </details>
 
 <details>
@@ -419,7 +419,7 @@ Automated [CI Workflow](.github/workflows/ci.yml) triggers on every push and PR 
 <details>
 <summary><strong>Q: What happens if I lose my data encryption key?</strong></summary>
 
-> **A**: All local files (`data/*.json`) are statically encrypted at rest with `DATA_ENCRYPTION_KEY` (or `CPE_PASSWORD`) via `scrypt` + `AES-256-GCM`. If you modify your password and need to read older archives, restore your previous key to re-derive the decryption subkeys. No data is ever sent to third-party clouds.
+> **A**: All local files (`data/*.json`) are statically encrypted at rest with `DATA_ENCRYPTION_KEY` (or `CPE_PASSWORD`) via `scrypt` + `AES-256-GCM`. If you modify your password and need to read older archives, restore your previous key to re-derive the decryption subkeys. All data is kept locally on your host.
 </details>
 
 ---

@@ -65,7 +65,7 @@ All three checks are enforced in local pre-commit and GitHub Actions CI:
 
 - **TypeScript Strictness**: Keep `"strict": true`, `"verbatimModuleSyntax": true`, and `"rewriteRelativeImportExtensions": true` enabled. Use `import type { ... }` for type-only imports and explicit `.ts` extensions in relative imports.
 - **Constant-Time Cryptography**: Use `crypto.timingSafeEqual` over SHA-256 digests for all token and password comparisons.
-- **Zero Decorative Emojis**: The Web UI and Telegram Bot follow the Sujian (素笺) design language — clean typography, custom SVG icon sprites, and no decorative emojis.
+- **Minimal Typographic Style**: The Web UI and Telegram Bot follow the Sujian (素笺) design language — clean typography and custom SVG icon sprites.
 
 ---
 

@@ -79,6 +79,7 @@ The system provides a **two-way interactive Telegram Bot (with step-by-step send
   - Built with **daisyUI v5 + Tailwind CSS v4** (compiled offline, zero CDN dependencies, instant LAN loading).
   - **Zero-emoji typographic design**: 20+ custom `1.75px` stroke vector SVG icons; 5-minute message bubble aggregation; monospace OTP badges with one-click copy.
   - **4 Base Themes × 9 Accent Colors**: Sujian Light (pure light), Sujian Paper (warm oat paper), Sujian Dark (charcoal dark), and Sujian Midnight (deep night) with dual-curve luminance tuning for dark and light backgrounds, supporting auto system dark/light switching.
+  - **Extensible Community i18n**: Out-of-the-box English and Simplified Chinese support (matches browser locale or manually switched in Appearance); community contributors can add any language by dropping a single [`locales/<lang>.json`](locales/) file.
   - **High-port consolidation (`:18383`)**: Serves web UI, SSE event streams (`/api/events`), health checks (`/healthz`), and REST API on a single port, avoiding common NAS `:8080` collisions.
 - **✍️ Two-Way Telegram Bot & Guided Send Wizard**
   - **Guided wizard (`/new`)**: Interactive step-by-step sender with country dial code switching, contact name search, and message encoding preview (GSM 7-bit vs UCS-2) with segment counts before sending.

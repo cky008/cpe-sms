@@ -49,6 +49,11 @@ export function linkifyHtml(str: string): string {
 }
 
 const WEEKDAYS_ZH = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"] as const;
+const WEEKDAYS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const MONTHS_EN = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+] as const;
 
 /** Whole-day difference between `refNow` and a `YYYY-MM-DD` string (0 = today). */
 export function daysAgo(datePart: string, refNow: Date = new Date()): number {
@@ -62,40 +67,57 @@ export function daysAgo(datePart: string, refNow: Date = new Date()): number {
   return Math.round((today - then) / 86_400_000);
 }
 
-export function formatShortTime(dateStr?: string, refNow: Date = new Date()): string {
+export function formatShortTime(dateStr?: string, refNow: Date = new Date(), lang = "zh-CN"): string {
   if (!dateStr) return "";
   const [d, t] = dateStr.split(" ");
   if (!d || !t) return dateStr;
+  const isEn = lang.toLowerCase().startsWith("en");
   const diff = daysAgo(d, refNow);
   if (diff === 0) return t.slice(0, 5);
-  if (diff === 1) return "昨天";
+  if (diff === 1) return isEn ? "Yesterday" : "昨天";
   if (diff > 1 && diff < 7) {
     const [y, m, day] = d.split("-").map(Number);
-    return WEEKDAYS_ZH[new Date(y!, m! - 1, day!).getDay()] ?? d;
+    const dayIdx = new Date(y!, m! - 1, day!).getDay();
+    return isEn ? (WEEKDAYS_EN[dayIdx] ?? d) : (WEEKDAYS_ZH[dayIdx] ?? d);
   }
   const [y, m, day] = d.split("-");
+  if (isEn) {
+    const monthName = MONTHS_EN[Number(m) - 1] ?? m;
+    return y === String(refNow.getFullYear())
+      ? `${monthName} ${Number(day)}`
+      : `${monthName} ${Number(day)}, ${y}`;
+  }
   return y === String(refNow.getFullYear())
     ? `${Number(m)}月${Number(day)}日`
     : `${y}/${Number(m)}/${Number(day)}`;
 }
 
-export function formatDayLabel(datePart: string, refNow: Date = new Date()): string {
+export function formatDayLabel(datePart: string, refNow: Date = new Date(), lang = "zh-CN"): string {
+  const isEn = lang.toLowerCase().startsWith("en");
   const diff = daysAgo(datePart, refNow);
-  if (diff === 0) return "今天";
-  if (diff === 1) return "昨天";
+  if (diff === 0) return isEn ? "Today" : "今天";
+  if (diff === 1) return isEn ? "Yesterday" : "昨天";
   const [y, m, d] = datePart.split("-");
-  const weekday = WEEKDAYS_ZH[new Date(Number(y), Number(m) - 1, Number(d)).getDay()] ?? "";
+  const dayIdx = new Date(Number(y), Number(m) - 1, Number(d)).getDay();
+  if (isEn) {
+    const monthName = MONTHS_EN[Number(m) - 1] ?? m;
+    const weekday = WEEKDAYS_EN[dayIdx] ?? "";
+    if (y === String(refNow.getFullYear())) return `${monthName} ${Number(d)}, ${weekday}`;
+    return `${monthName} ${Number(d)}, ${y}`;
+  }
+  const weekday = WEEKDAYS_ZH[dayIdx] ?? "";
   if (y === String(refNow.getFullYear())) return `${Number(m)}月${Number(d)}日 ${weekday}`;
   return `${y}年${Number(m)}月${Number(d)}日`;
 }
 
-export function threadGroupLabel(dateStr?: string, refNow: Date = new Date()): string {
+export function threadGroupLabel(dateStr?: string, refNow: Date = new Date(), lang = "zh-CN"): string {
+  const isEn = lang.toLowerCase().startsWith("en");
   const diff = daysAgo((dateStr ?? "").split(" ")[0] ?? "", refNow);
-  if (diff <= 0) return "今天";
-  if (diff === 1) return "昨天";
-  if (diff < 7) return "本周";
-  if (diff < 31) return "本月";
-  return "更早";
+  if (diff <= 0) return isEn ? "Today" : "今天";
+  if (diff === 1) return isEn ? "Yesterday" : "昨天";
+  if (diff < 7) return isEn ? "This Week" : "本周";
+  if (diff < 31) return isEn ? "This Month" : "本月";
+  return isEn ? "Earlier" : "更早";
 }
 
 export function parseMsgTime(dateStr: string): number {
@@ -148,9 +170,15 @@ export function estimateLocalSmsMode(text: string): {
   return { encoding: "7BIT", segments: len <= 160 ? 1 : Math.ceil(len / 153), len };
 }
 
-export function describeSmsMode(text: string): string {
+export function describeSmsMode(text: string, lang = "zh-CN"): string {
+  const isEn = lang.toLowerCase().startsWith("en");
   const info = estimateLocalSmsMode(text);
   const enc = info.encoding === "7BIT" ? "GSM-7" : "UCS-2";
+  if (isEn) {
+    return info.len === 0
+      ? `${enc} · 0 chars`
+      : `${enc} · ${info.len} char${info.len > 1 ? "s" : ""} · ${info.segments} segment${info.segments > 1 ? "s" : ""}`;
+  }
   return info.len === 0 ? `${enc} · 0 字` : `${enc} · ${info.len} 字 · ${info.segments} 条`;
 }
 

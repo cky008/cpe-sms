@@ -23,8 +23,9 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.test.json && tsc -p tsconfig.web.json --noEmit",
+    "build:locales": "node scripts/build-locales.ts",
     "build:css": "tailwindcss -i src/web/styles.css -o src/web/public/app.css --minify",
-    "build:web": "tsc -p tsconfig.web.json && npm run build:css",
+    "build:web": "npm run build:locales && tsc -p tsconfig.web.json && npm run build:css",
     "build": "npm run build:web && tsc -p tsconfig.json && node scripts/copy-web-assets.ts",
     "start": "node dist/cli.js daemon",
     "dev": "node --watch src/cli.ts daemon",

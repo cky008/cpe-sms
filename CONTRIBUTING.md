@@ -82,3 +82,29 @@ All three checks are enforced in local pre-commit and GitHub Actions CI:
 - Before submitting a Pull Request:
   - Ensure all local commits pass `npm run build && npm run check`.
   - Never commit personal phone numbers, domains, or credentials.
+
+---
+
+## 7. Contributing Translations (i18n)
+
+We welcome community translations! `cpe-sms` features an extensible, zero-dependency translation architecture:
+
+1. Copy [`locales/en.json`](locales/en.json) or [`locales/zh-CN.json`](locales/zh-CN.json) to `locales/<lang-code>.json` (for example, `locales/ja.json`, `locales/de.json`, or `locales/fr.json`).
+2. Update the `_meta` block at the top:
+   ```json
+   {
+     "_meta": {
+       "name": "日本語",
+       "code": "ja"
+     },
+     ...
+   }
+   ```
+3. Translate all values in the file, preserving variable placeholders like `{count}`, `{phone}`, `{who}`, or `{code}`.
+4. Run the locale build and verification suite:
+   ```bash
+   npm run build
+   npm test
+   ```
+   The build script (`scripts/build-locales.ts`) automatically discovers your new file, generates type definitions, and bundles it for offline client rendering. The test suite verifies 100% key parity with the baseline dictionary.
+5. Commit and open a Pull Request!

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability Reporting
+    url: https://github.com/cky008/cpe-sms/security/advisories/new
+    about: If you have discovered a potential security vulnerability, please report it privately via GitHub Security Advisory.

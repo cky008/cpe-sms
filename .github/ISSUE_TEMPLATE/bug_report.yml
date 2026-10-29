@@ -1,0 +1,74 @@
+name: Bug Report
+description: Report a reproducible bug or unexpected behavior in cpe-sms
+title: "fix: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### ⚠️ Important Privacy & Security Notice
+        **NEVER post real credentials, Telegram Bot tokens, real phone numbers, or SMS verification codes (OTPs).**
+        Always replace sensitive values with placeholders (`+353831234567`, `192.168.8.1`, `123456:FAKE_TOKEN`, `[REDACTED]`).
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment Environment
+      description: How and where are you running cpe-sms?
+      options:
+        - Docker Compose on Synology DSM (NAS)
+        - Docker on Linux / Debian / Ubuntu
+        - Docker on TrueNAS / Unraid
+        - Bare-metal Node.js (systemd / pm2)
+        - macOS / Local Development
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Router Model & Firmware Version
+      description: What router model are you connecting to?
+      placeholder: "e.g., Huawei 5G CPE Ultra 6 (H168-383), firmware version 11.x / 12.x"
+    validations:
+      required: true
+
+  - type: input
+    id: node_version
+    attributes:
+      label: Node.js Version
+      description: Node.js runtime version (`node -v`)
+      placeholder: "e.g., v22.12.0"
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Exact steps to reproduce the behavior.
+      placeholder: |
+        1. Configure .env with ...
+        2. Start the daemon with ...
+        3. Trigger SMS send or receive ...
+        4. See error ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized Relevant Logs
+      description: Paste relevant terminal or container logs here (make sure ALL secrets and personal phone numbers are masked).
+      render: shell
+    validations:
+      required: false

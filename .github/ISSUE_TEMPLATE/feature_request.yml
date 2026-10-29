@@ -1,0 +1,50 @@
+name: Feature Request
+description: Suggest an enhancement, new capability, or support for another router model
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting a feature! Please provide clear context on what problem this solves.
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Feature Category
+      description: Which part of the system would this feature touch?
+      options:
+        - Router Protocol & CPE Hardware Compatibility
+        - Sujian Web Center (UI / Themes / Features)
+        - Telegram Bot & Guided Wizard
+        - Local Storage / Archive / vCard Contacts
+        - REST API / Webhook Integration
+        - Deployment / Docker / NAS Support
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement / Use Case
+      description: Is your feature request related to a problem or specific use case?
+      placeholder: "I'm always frustrated when..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed Solution / Ideal Behavior
+      description: Describe what you would like to happen and how it should work.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Describe any alternative solutions or workarounds you've considered.
+    validations:
+      required: false

@@ -7,7 +7,7 @@ services:
     env_file:
       - .env
     environment:
-      - TZ=Europe/Dublin
+      - TZ=${TZ:-UTC}
       - STATE_FILE=/app/data/state.json
       - ARCHIVE_FILE=/app/data/sms-archive.json
       - CONTACTS_FILE=/app/data/contacts.json
@@ -29,7 +29,7 @@ services:
     depends_on:
       - cpe-sms
     environment:
-      - TZ=Europe/Dublin
+      - TZ=${TZ:-UTC}
       - WEB_PORT=18383
       - WEB_UPSTREAM_URL=http://cpe-sms:18383
     ports:

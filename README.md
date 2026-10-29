@@ -116,6 +116,18 @@ flowchart LR
 
 ## 📜「素笺 (Sujian)」极简网页中心
 
+<p align="center">
+  <img src="docs/assets/sujian-demo.png" alt="素笺 Sujian 实时网页中心（晴昼浅色）" width="100%" />
+</p>
+<p align="center">
+  <img src="docs/assets/sujian-demo-dark.png" alt="素笺 Sujian 实时网页中心（墨夜深炭）" width="100%" />
+</p>
+<p align="center">
+  <img src="docs/assets/sujian-demo-theme.png" alt="4 套基底主题与 9 种强调色切换" width="48%" />
+  <img src="docs/assets/sujian-demo-dark-phone.png" alt="移动端适配（对话详情）" width="24%" />
+  <img src="docs/assets/sujian-demo-phone-menu.png" alt="移动端适配（导航抽屉）" width="24%" />
+</p>
+
 网页中心以“一纸素笺，见字如面”为核心理念，打造清爽克制、专注阅读与收发的纸感体验：
 
 | 基底主题 | 风格定位 | 说明 |

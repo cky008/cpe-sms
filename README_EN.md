@@ -115,6 +115,18 @@ flowchart LR
 
 ## 📜 Sujian (素笺) Web Center
 
+<p align="center">
+  <img src="docs/assets/sujian-demo.png" alt="Sujian Web Center (Daylight Mode)" width="100%" />
+</p>
+<p align="center">
+  <img src="docs/assets/sujian-demo-dark.png" alt="Sujian Web Center (Dark Mode)" width="100%" />
+</p>
+<p align="center">
+  <img src="docs/assets/sujian-demo-theme.png" alt="4 Base Themes & 9 Accent Colors" width="48%" />
+  <img src="docs/assets/sujian-demo-dark-phone.png" alt="Mobile View (Conversation)" width="24%" />
+  <img src="docs/assets/sujian-demo-phone-menu.png" alt="Mobile View (Drawer)" width="24%" />
+</p>
+
 The Web Center follows the philosophy of "Sujian" (素笺 — plain silk letter paper), prioritizing calm reading and distraction-free messaging:
 
 | Base Theme | Visual Style | Description |

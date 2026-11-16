@@ -8,6 +8,14 @@
   <strong>简体中文</strong> | <a href="README_EN.md">English</a>
 </p>
 
+> [!IMPORTANT]
+> **本项目已不再维护。** cpe-sms 的全部功能（短信收发、加密的短信镜像、Telegram 双向机器人、Webhook 与告警）都已并入 **[烽燧 FengSui（cpe-dash）](https://github.com/cky008/cpe-dash)**：在那里，短信和信号监控、锁频锁小区、蜂窝设置共用路由器的同一个管理会话，并且支持更多品牌的路由器。
+>
+> - 新用户请直接使用 [cpe-dash](https://github.com/cky008/cpe-dash)。
+> - 从 cpe-sms 换过去：先停掉 cpe-sms，再把同一个 Telegram 机器人令牌填进 cpe-dash（同一个令牌同时只能有一个程序接收消息）。
+> - 有问题或建议，请到 [cpe-dash 的 Issues](https://github.com/cky008/cpe-dash/issues) 提出。本仓库保留作参考，不再处理 Issue 和 Pull Request。
+
+
 <p align="center">
   <a href="https://github.com/cky008/cpe-sms/actions/workflows/ci.yml">
     <img src="https://img.shields.io/github/actions/workflow/status/cky008/cpe-sms/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white" alt="CI Status" />

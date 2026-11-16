@@ -8,6 +8,14 @@
   <a href="README.md">简体中文</a> | <strong>English</strong>
 </p>
 
+> [!IMPORTANT]
+> **This project is no longer maintained.** Everything cpe-sms did (sending and receiving SMS, the encrypted SMS mirror, the two-way Telegram bot, webhooks and alerts) is now part of **[FengSui (cpe-dash)](https://github.com/cky008/cpe-dash)**, where SMS shares the router's one admin session with signal monitoring, band and cell locks and the cellular settings, on routers of more brands.
+>
+> - New users: use [cpe-dash](https://github.com/cky008/cpe-dash) instead.
+> - Moving from cpe-sms: stop cpe-sms first, then give cpe-dash the same Telegram bot token (only one program can receive a bot's messages at a time).
+> - Questions and suggestions: open an [issue on cpe-dash](https://github.com/cky008/cpe-dash/issues). This repository stays for reference and no longer takes issues or pull requests.
+
+
 <p align="center">
   <a href="https://github.com/cky008/cpe-sms/actions/workflows/ci.yml">
     <img src="https://img.shields.io/github/actions/workflow/status/cky008/cpe-sms/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white" alt="CI Status" />
